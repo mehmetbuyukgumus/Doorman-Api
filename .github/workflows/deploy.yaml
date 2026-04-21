@@ -61,6 +61,6 @@ jobs:
         uses: caprover/deploy-from-github@v1.1.2
         with:
           server: ${{ secrets.CAPROVER_SERVER }}
-          password: ${{ secrets.CAPROVER_PASSWORD }}
-          appname: 'backend-apartments'
-          imageName: ${{ secrets.DOCKERHUB_USERNAME }}/backend-apartments:${{ steps.tag_version.outputs.new_tag }}
+          token: ${{ secrets.CAPROVER_PASSWORD }}
+          app: 'backend-apartments'
+          image: ${{ secrets.DOCKERHUB_USERNAME }}/backend-apartments:${{ steps.tag_version.outputs.new_tag }}
