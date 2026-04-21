@@ -230,8 +230,12 @@ def get_research_listings(db: Session, skip: int = 0, limit: int = 100):
     ).order_by(models.ResearchListing.created_at.desc()).offset(skip).limit(limit).all()
 
 
+
 def create_research_listing(db: Session, listing: schemas.ResearchListingCreate, user_id: Optional[int] = None):
     data = listing.model_dump()
+    if data.get("url"):
+        data["url"] = data["url"].strip()
+    
     tag_ids = data.pop("tag_ids", [])
     if user_id:
         data["created_by_id"] = user_id
@@ -239,8 +243,6 @@ def create_research_listing(db: Session, listing: schemas.ResearchListingCreate,
         data["price_per_sqm"] = data["price"] / data["square_meters"]
     
     db_listing = models.ResearchListing(**data)
-
-
     
     if tag_ids:
         tags = db.query(models.ResearchTag).filter(models.ResearchTag.id.in_(tag_ids)).all()
@@ -256,8 +258,10 @@ def update_research_listing(db: Session, listing_id: int, updates: schemas.Resea
     db_listing = db.query(models.ResearchListing).filter(models.ResearchListing.id == listing_id).first()
     if not db_listing:
         return None
-    
     update_data = updates.model_dump(exclude_unset=True)
+    if update_data.get("url"):
+        update_data["url"] = update_data["url"].strip()
+    
     print(f"DEBUG: update_data keys: {list(update_data.keys())}")
     print(f"DEBUG: internal_notes value: {update_data.get('internal_notes')}")
     tag_ids = update_data.pop("tag_ids", None)
