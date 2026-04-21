@@ -9,13 +9,13 @@ jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Needed to push tags and create releases
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required for tagging
+          fetch-depth: 0
 
       - name: GitHub Tag
         id: tag_version
