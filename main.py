@@ -265,8 +265,33 @@ def delete_user(
     if user_to_delete.email == current_user["email"]:
         raise HTTPException(status_code=400, detail="Superusers cannot delete their own account")
         
-    db.delete(user_to_delete)
-    db.commit()
+    try:
+        # Reassign or clean up associated content to avoid foreign key violations
+        # while keeping the data.
+        
+        # 1. Properties
+        db.query(models.Listing).filter(models.Listing.created_by_id == id).update({"created_by_id": None})
+        db.query(models.Listing).filter(models.Listing.updated_by_id == id).update({"updated_by_id": None})
+        
+        # 2. Blog Posts
+        db.query(models.BlogPost).filter(models.BlogPost.author_id == id).update({"author_id": None})
+        
+        # 3. Research Listings
+        db.query(models.ResearchListing).filter(models.ResearchListing.created_by_id == id).update({"created_by_id": None})
+        
+        # 4. Password Reset Requests (These can be safely deleted)
+        db.query(models.PasswordResetRequest).filter(models.PasswordResetRequest.user_id == id).delete()
+        
+        # Finally delete the user
+        db.delete(user_to_delete)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during user deletion cleanup: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Kullanıcı silinirken bir hata oluştu. Lütfen tekrar deneyin."
+        )
     return None
 
 # File upload constants
