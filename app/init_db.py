@@ -1,5 +1,6 @@
 import os
-import database, models, auth
+from . import db as database, models
+from .core import auth
 from dotenv import load_dotenv
 
 load_dotenv()

@@ -262,3 +262,25 @@ class ResearchListing(ResearchListingBase):
     created_by: Optional[UserSchema] = None
     buyer: Optional[Buyer] = None
     model_config = ConfigDict(from_attributes=True)
+
+class InvestorBase(BaseModel):
+    full_name: str
+    email: str
+
+class InvestorCreate(InvestorBase):
+    pass
+
+class Investor(InvestorBase):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class SendResearchMailRequest(BaseModel):
+    listing_id: int
+    image_url: Optional[str] = None
+    additional_message: Optional[str] = None
+    investor_ids: Optional[List[int]] = None
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
