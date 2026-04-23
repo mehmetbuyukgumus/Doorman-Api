@@ -55,8 +55,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure data directory exists for SQLite persistence
-os.makedirs("./data", exist_ok=True)
-
 # Include API Router
 app.include_router(api_router)
