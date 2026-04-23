@@ -7,7 +7,7 @@ from app import models, schemas, crud
 from app.core import auth
 from app.db import get_db
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 # --- Public Blog Endpoints ---
 
@@ -24,7 +24,7 @@ def get_blog_post(slug: str, db: Session = Depends(get_db)):
 
 # --- Protected Blog Endpoints ---
 
-@router.get("/admin/posts/", response_model=List[schemas.BlogPost])
+@router.get("/admin/posts", response_model=List[schemas.BlogPost])
 def read_all_posts_admin(
     skip: int = 0, 
     limit: int = 100, 

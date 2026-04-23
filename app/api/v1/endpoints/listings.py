@@ -8,7 +8,7 @@ from app.core import auth
 from app.db import get_db
 from app.services import mail as mail_service
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 # --- Public Endpoints ---
 
@@ -113,7 +113,7 @@ def create_research_listing(
         db.rollback()
         raise HTTPException(status_code=400, detail="This URL has already been added to the research list.")
 
-@router.put("/admin/research-listings{id}", response_model=schemas.ResearchListing)
+@router.put("/admin/research-listings/{id}", response_model=schemas.ResearchListing)
 def update_research_listing(
     id: int,
     updates: schemas.ResearchListingUpdate,
@@ -129,7 +129,7 @@ def update_research_listing(
         db.rollback()
         raise HTTPException(status_code=400, detail="This URL is already assigned to another research listing.")
 
-@router.delete("/admin/research-listings{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin/research-listings/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_research_listing(
     id: int, 
     db: Session = Depends(get_db),

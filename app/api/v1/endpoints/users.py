@@ -7,7 +7,7 @@ from app import models, schemas
 from app.core import auth
 from app.db import get_db
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 @router.get("" , response_model=List[schemas.UserSchema])
 def read_admin_users(
