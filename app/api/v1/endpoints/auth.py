@@ -8,7 +8,7 @@ from app import models, schemas
 from app.core import auth
 from app.db import get_db
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 class ForgotPasswordRequest(BaseModel):
     email: str

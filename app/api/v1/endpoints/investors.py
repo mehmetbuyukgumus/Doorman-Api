@@ -7,7 +7,7 @@ from app import schemas, crud
 from app.core import auth
 from app.db import get_db
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 # --- Investor Endpoints ---
 

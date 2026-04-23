@@ -4,7 +4,7 @@ from typing import List
 
 from app.core import auth
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 @router.post("/upload-images")
 async def upload_images(
