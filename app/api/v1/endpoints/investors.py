@@ -11,7 +11,7 @@ router = APIRouter()
 
 # --- Investor Endpoints ---
 
-@router.get("" , response_model=List[schemas.Investor])
+@router.get("/", response_model=List[schemas.Investor])
 def read_investors(
     skip: int = 0, 
     limit: int = 100, 
@@ -20,7 +20,7 @@ def read_investors(
 ):
     return crud.get_investors(db, skip=skip, limit=limit)
 
-@router.post("" , response_model=schemas.Investor, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=schemas.Investor, status_code=status.HTTP_201_CREATED)
 def create_investor(
     investor: schemas.InvestorCreate, 
     db: Session = Depends(get_db),
