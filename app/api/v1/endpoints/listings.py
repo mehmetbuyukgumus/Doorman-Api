@@ -140,7 +140,7 @@ def delete_research_listing(
         raise HTTPException(status_code=404, detail="Research listing not found")
     return None
 
-@router.post("/admin/research-listingssend-mail/")
+@router.post("/admin/research-listings/send-mail")
 async def send_research_mail(
     payload: schemas.SendResearchMailRequest, 
     db: Session = Depends(get_db), 
@@ -188,7 +188,7 @@ def create_research_tag(
         db.rollback()
         raise HTTPException(status_code=400, detail="Tag already exists.")
 
-@router.delete("/admin/research-tags{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin/research-tags/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_research_tag(
     id: int,
     db: Session = Depends(get_db),
