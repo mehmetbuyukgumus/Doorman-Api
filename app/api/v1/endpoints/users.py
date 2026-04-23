@@ -9,14 +9,14 @@ from app.db import get_db
 
 router = APIRouter()
 
-@router.get("" , response_model=List[schemas.UserSchema])
+@router.get("/", response_model=List[schemas.UserSchema])
 def read_admin_users(
     db: Session = Depends(get_db),
     current_user: dict = Depends(auth.RoleChecker(["superuser"]))
 ):
     return db.query(models.User).all()
 
-@router.post("" , response_model=schemas.UserSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=schemas.UserSchema, status_code=status.HTTP_201_CREATED)
 def create_admin_user(
     user: schemas.UserCreate, 
     db: Session = Depends(get_db),

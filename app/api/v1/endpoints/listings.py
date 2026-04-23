@@ -92,7 +92,7 @@ def delete_property(
 
 # --- Research Listing Endpoints ---
 
-@router.get("/admin/research-listings/", response_model=List[schemas.ResearchListing])
+@router.get("/admin/research-listings", response_model=List[schemas.ResearchListing])
 def read_research_listings(
     skip: int = 0, 
     limit: int = 100, 
@@ -101,7 +101,7 @@ def read_research_listings(
 ):
     return crud.get_research_listings(db, skip=skip, limit=limit)
 
-@router.post("/admin/research-listings/", response_model=schemas.ResearchListing, status_code=status.HTTP_201_CREATED)
+@router.post("/admin/research-listings", response_model=schemas.ResearchListing, status_code=status.HTTP_201_CREATED)
 def create_research_listing(
     listing: schemas.ResearchListingCreate, 
     db: Session = Depends(get_db),
@@ -113,7 +113,7 @@ def create_research_listing(
         db.rollback()
         raise HTTPException(status_code=400, detail="This URL has already been added to the research list.")
 
-@router.put("/admin/research-listings/{id}", response_model=schemas.ResearchListing)
+@router.put("/admin/research-listings{id}", response_model=schemas.ResearchListing)
 def update_research_listing(
     id: int,
     updates: schemas.ResearchListingUpdate,
@@ -129,7 +129,7 @@ def update_research_listing(
         db.rollback()
         raise HTTPException(status_code=400, detail="This URL is already assigned to another research listing.")
 
-@router.delete("/admin/research-listings/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin/research-listings{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_research_listing(
     id: int, 
     db: Session = Depends(get_db),
@@ -140,7 +140,7 @@ def delete_research_listing(
         raise HTTPException(status_code=404, detail="Research listing not found")
     return None
 
-@router.post("/admin/research-listings/send-mail/")
+@router.post("/admin/research-listingssend-mail/")
 async def send_research_mail(
     payload: schemas.SendResearchMailRequest, 
     db: Session = Depends(get_db), 
@@ -169,14 +169,14 @@ async def send_research_mail(
 
 # --- Research Tag Endpoints ---
 
-@router.get("/admin/research-tags/", response_model=List[schemas.ResearchTag])
+@router.get("/admin/research-tags", response_model=List[schemas.ResearchTag])
 def read_research_tags(
     db: Session = Depends(get_db),
     current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
 ):
     return crud.get_research_tags(db)
 
-@router.post("/admin/research-tags/", response_model=schemas.ResearchTag)
+@router.post("/admin/research-tags", response_model=schemas.ResearchTag)
 def create_research_tag(
     tag: schemas.ResearchTagCreate,
     db: Session = Depends(get_db),
@@ -188,7 +188,7 @@ def create_research_tag(
         db.rollback()
         raise HTTPException(status_code=400, detail="Tag already exists.")
 
-@router.delete("/admin/research-tags/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin/research-tags{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_research_tag(
     id: int,
     db: Session = Depends(get_db),
