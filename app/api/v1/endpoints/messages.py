@@ -8,7 +8,7 @@ from app.db import get_db
 
 router = APIRouter()
 
-@router.post("/", response_model=schemas.ContactMessage, status_code=status.HTTP_201_CREATED)
+@router.post("" , response_model=schemas.ContactMessage, status_code=status.HTTP_201_CREATED)
 def create_contact_message(message: schemas.ContactRequest, db: Session = Depends(get_db)):
     db_message = models.ContactMessage(**message.model_dump())
     db.add(db_message)
@@ -16,7 +16,7 @@ def create_contact_message(message: schemas.ContactRequest, db: Session = Depend
     db.refresh(db_message)
     return db_message
 
-@router.get("/", response_model=List[schemas.ContactMessage])
+@router.get("" , response_model=List[schemas.ContactMessage])
 def read_contact_messages(
     skip: int = 0, 
     limit: int = 100, 

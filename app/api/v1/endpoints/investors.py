@@ -11,7 +11,7 @@ router = APIRouter()
 
 # --- Investor Endpoints ---
 
-@router.get("/", response_model=List[schemas.Investor])
+@router.get("" , response_model=List[schemas.Investor])
 def read_investors(
     skip: int = 0, 
     limit: int = 100, 
@@ -20,7 +20,7 @@ def read_investors(
 ):
     return crud.get_investors(db, skip=skip, limit=limit)
 
-@router.post("/", response_model=schemas.Investor, status_code=status.HTTP_201_CREATED)
+@router.post("" , response_model=schemas.Investor, status_code=status.HTTP_201_CREATED)
 def create_investor(
     investor: schemas.InvestorCreate, 
     db: Session = Depends(get_db),
@@ -45,7 +45,7 @@ def delete_investor(
 
 # --- Buyer Endpoints ---
 
-@router.get("/buyers/", response_model=List[schemas.Buyer])
+@router.get("/buyers", response_model=List[schemas.Buyer])
 def read_buyers(
     skip: int = 0, 
     limit: int = 100, 
@@ -54,7 +54,7 @@ def read_buyers(
 ):
     return crud.get_buyers(db, skip=skip, limit=limit)
 
-@router.post("/buyers/", response_model=schemas.Buyer, status_code=status.HTTP_201_CREATED)
+@router.post("/buyers", response_model=schemas.Buyer, status_code=status.HTTP_201_CREATED)
 def create_buyer(
     buyer: schemas.BuyerCreate, 
     db: Session = Depends(get_db),
