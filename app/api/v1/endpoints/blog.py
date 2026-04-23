@@ -11,7 +11,7 @@ router = APIRouter()
 
 # --- Public Blog Endpoints ---
 
-@router.get("/", response_model=List[schemas.BlogPost])
+@router.get("" , response_model=List[schemas.BlogPost])
 def get_blog_posts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(models.BlogPost).filter(models.BlogPost.is_published == True, models.BlogPost.is_approved == True).order_by(models.BlogPost.published_at.desc()).offset(skip).limit(limit).all()
 
@@ -33,7 +33,7 @@ def read_all_posts_admin(
 ):
     return db.query(models.BlogPost).order_by(models.BlogPost.published_at.desc()).offset(skip).limit(limit).all()
 
-@router.post("/", response_model=schemas.BlogPost, status_code=status.HTTP_201_CREATED)
+@router.post("" , response_model=schemas.BlogPost, status_code=status.HTTP_201_CREATED)
 def create_blog_post(
     post: schemas.BlogPostCreate, 
     db: Session = Depends(get_db),

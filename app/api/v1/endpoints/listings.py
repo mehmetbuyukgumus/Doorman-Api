@@ -12,7 +12,7 @@ router = APIRouter()
 
 # --- Public Endpoints ---
 
-@router.get("/properties/", response_model=List[schemas.Listing])
+@router.get("/properties", response_model=List[schemas.Listing])
 def get_properties(
     skip: int = 0, 
     limit: int = 100, 
