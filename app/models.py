@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boole
 
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-import database
+from . import db as database
 
 class Listing(database.Base):
     __tablename__ = "listings"
@@ -185,4 +185,12 @@ class ResearchListing(database.Base):
     created_by = relationship("User")
     buyer = relationship("Buyer")
     tags = relationship("ResearchTag", secondary=research_listing_tags, backref="listings")
+
+class Investor(database.Base):
+    __tablename__ = "investors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
