@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 from .endpoints import auth, listings, investors, blog, messages, users, utils
 
+# Flat router - prefixes are in the endpoint files
 api_router = APIRouter(redirect_slashes=False)
 
-api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
-api_router.include_router(investors.router, prefix="/admin/investors", tags=["investors"])
-api_router.include_router(listings.router, tags=["listings"])
-api_router.include_router(blog.router, prefix="/blog-posts", tags=["blog"])
-api_router.include_router(messages.router, prefix="/contact", tags=["messages"])
-api_router.include_router(messages.admin_router, prefix="/admin/contact-messages", tags=["messages-admin"])
-api_router.include_router(users.router, prefix="/admin/users", tags=["users"])
-api_router.include_router(utils.router, tags=["utils"])
+api_router.include_router(auth.router)
+api_router.include_router(listings.router)
+api_router.include_router(investors.router)
+api_router.include_router(blog.router)
+api_router.include_router(messages.router)
+api_router.include_router(users.router)
+api_router.include_router(utils.router)
