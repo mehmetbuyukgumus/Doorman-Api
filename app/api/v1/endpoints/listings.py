@@ -55,7 +55,7 @@ def get_property(id: int, db: Session = Depends(get_db)):
 
 # --- Protected Listing Endpoints ---
 
-@router.post("/properties/", response_model=schemas.Listing, status_code=status.HTTP_201_CREATED)
+@router.post("/properties", response_model=schemas.Listing, status_code=status.HTTP_201_CREATED)
 def create_property(
     listing: schemas.ListingCreate, 
     db: Session = Depends(get_db),
