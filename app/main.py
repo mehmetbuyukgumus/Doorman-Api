@@ -39,7 +39,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize admin user: {e}")
 
-app = FastAPI(title="Doorman Real Estate API", version="1.0.0")
+app = FastAPI(title="Doorman Real Estate API", version="1.0.0", redirect_slashes=False)
 
 # Rate limiter state
 app.state.limiter = limiter
