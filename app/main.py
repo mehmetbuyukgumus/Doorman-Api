@@ -55,5 +55,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API Router
-app.include_router(api_router)
+# Include API Router with v1 prefix
+app.include_router(api_router, prefix="/v1")
