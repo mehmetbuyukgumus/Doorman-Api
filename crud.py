@@ -332,3 +332,273 @@ def delete_research_tag(db: Session, tag_id: int):
         db.commit()
         return True
     return False
+
+# --- Concierge Services CRUD & Sync ---
+import urllib.request
+from datetime import datetime
+
+def get_concierge_properties(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.ConciergeProperty).offset(skip).limit(limit).all()
+
+def get_concierge_property(db: Session, property_id: int):
+    return db.query(models.ConciergeProperty).filter(models.ConciergeProperty.id == property_id).first()
+
+def create_concierge_property(db: Session, property: schemas.ConciergePropertyCreate):
+    db_prop = models.ConciergeProperty(**property.model_dump())
+    db.add(db_prop)
+    db.commit()
+    db.refresh(db_prop)
+    return db_prop
+
+def update_concierge_property(db: Session, property_id: int, property_update: schemas.ConciergePropertyUpdate):
+    db_prop = db.query(models.ConciergeProperty).filter(models.ConciergeProperty.id == property_id).first()
+    if not db_prop:
+        return None
+    
+    update_data = property_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_prop, key, value)
+        
+    db.commit()
+    db.refresh(db_prop)
+    return db_prop
+
+def delete_concierge_property(db: Session, property_id: int):
+    db_prop = db.query(models.ConciergeProperty).filter(models.ConciergeProperty.id == property_id).first()
+    if db_prop:
+        db.delete(db_prop)
+        db.commit()
+        return True
+    return False
+
+def sync_concierge_bookings(db: Session, property_id: int):
+    return True
+
+def calculate_financials(price, platform_fee, commission_rate, start_date, end_date):
+    p = float(price or 0.0)
+    pf = float(platform_fee or 0.0)
+    cr = float(commission_rate or 20.0)
+    
+    net = p - pf
+    doorman = net * (cr / 100.0)
+    owner = net - doorman
+    
+    if start_date and end_date:
+        delta = end_date - start_date
+        nights = max(1, delta.days)
+    else:
+        nights = 1
+        
+    return nights, doorman, owner
+
+def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreate, property_id: int):
+    # Check for overlapping reservation
+    overlapping = db.query(models.ConciergeBooking).filter(
+        models.ConciergeBooking.property_id == property_id,
+        models.ConciergeBooking.start_date < booking.end_date,
+        models.ConciergeBooking.end_date > booking.start_date
+    ).first()
+    if overlapping:
+        raise ValueError("Overlapping reservation exists for this property on these dates.")
+
+    nights, doorman, owner = calculate_financials(
+        booking.price,
+        booking.platform_fee,
+        booking.commission_rate,
+        booking.start_date,
+        booking.end_date
+    )
+
+    summary = booking.guest_name or "Direct Booking"
+    if booking.price:
+        summary += f" (€{booking.price})"
+        
+    db_booking = models.ConciergeBooking(
+        property_id=property_id,
+        start_date=booking.start_date,
+        end_date=booking.end_date,
+        summary=summary,
+        guest_name=booking.guest_name,
+        price=booking.price,
+        is_manual=True,
+        source=booking.platform or "manual",
+        platform=booking.platform or "resaoff",
+        platform_fee=booking.platform_fee,
+        commission_rate=booking.commission_rate,
+        doorman_commission=doorman,
+        owner_payout=owner,
+        nights=nights
+    )
+    db.add(db_booking)
+    db.commit()
+    db.refresh(db_booking)
+    return db_booking
+
+def update_concierge_booking(db: Session, booking_id: int, booking_update: schemas.ConciergeBookingUpdate):
+    db_booking = db.query(models.ConciergeBooking).filter(models.ConciergeBooking.id == booking_id).first()
+    if not db_booking:
+        return None
+
+    # Check for overlapping reservation (excluding the one being updated)
+    start_date = booking_update.start_date if booking_update.start_date is not None else db_booking.start_date
+    end_date = booking_update.end_date if booking_update.end_date is not None else db_booking.end_date
+    overlapping = db.query(models.ConciergeBooking).filter(
+        models.ConciergeBooking.property_id == db_booking.property_id,
+        models.ConciergeBooking.id != booking_id,
+        models.ConciergeBooking.start_date < end_date,
+        models.ConciergeBooking.end_date > start_date
+    ).first()
+    if overlapping:
+        raise ValueError("Overlapping reservation exists for this property on these dates.")
+
+    if booking_update.start_date is not None:
+        db_booking.start_date = booking_update.start_date
+    if booking_update.end_date is not None:
+        db_booking.end_date = booking_update.end_date
+    if booking_update.guest_name is not None:
+        db_booking.guest_name = booking_update.guest_name
+    if booking_update.price is not None:
+        db_booking.price = booking_update.price
+    if booking_update.platform is not None:
+        db_booking.platform = booking_update.platform
+        if booking_update.platform in ("airbnb", "booking"):
+            db_booking.source = booking_update.platform
+        else:
+            db_booking.source = "manual"
+            
+    if booking_update.platform_fee is not None:
+        db_booking.platform_fee = booking_update.platform_fee
+    if booking_update.commission_rate is not None:
+        db_booking.commission_rate = booking_update.commission_rate
+        
+    nights, doorman, owner = calculate_financials(
+        db_booking.price,
+        db_booking.platform_fee,
+        db_booking.commission_rate,
+        db_booking.start_date,
+        db_booking.end_date
+    )
+    
+    db_booking.nights = nights
+    db_booking.doorman_commission = doorman
+    db_booking.owner_payout = owner
+    
+    summary = db_booking.guest_name or "Direct Booking"
+    if db_booking.price:
+        summary += f" (€{db_booking.price})"
+    db_booking.summary = summary
+    
+    db.commit()
+    db.refresh(db_booking)
+    return db_booking
+
+def delete_concierge_booking(db: Session, booking_id: int):
+    db_booking = db.query(models.ConciergeBooking).filter(models.ConciergeBooking.id == booking_id).first()
+    if db_booking:
+        db.delete(db_booking)
+        db.commit()
+        return True
+    return False
+
+# ── Cleaner CRUD ───────────────────────────────────────────────────────────
+
+def get_cleaners(db: Session):
+    return db.query(models.Cleaner).order_by(models.Cleaner.name).all()
+
+def create_cleaner(db: Session, cleaner: schemas.CleanerCreate):
+    db_cleaner = models.Cleaner(name=cleaner.name, phone=cleaner.phone)
+    db.add(db_cleaner)
+    db.commit()
+    db.refresh(db_cleaner)
+    return db_cleaner
+
+def update_cleaner(db: Session, cleaner_id: int, cleaner_update: schemas.CleanerUpdate):
+    db_cleaner = db.query(models.Cleaner).filter(models.Cleaner.id == cleaner_id).first()
+    if not db_cleaner:
+        return None
+    for field, value in cleaner_update.model_dump(exclude_unset=True).items():
+        setattr(db_cleaner, field, value)
+    db.commit()
+    db.refresh(db_cleaner)
+    return db_cleaner
+
+def delete_cleaner(db: Session, cleaner_id: int):
+    db_cleaner = db.query(models.Cleaner).filter(models.Cleaner.id == cleaner_id).first()
+    if db_cleaner:
+        db.delete(db_cleaner)
+        db.commit()
+        return True
+    return False
+
+# ── CleaningAssignment CRUD ────────────────────────────────────────────────
+
+def get_cleaning_assignments(db: Session, cleaning_date: str = None):
+    query = db.query(models.CleaningAssignment).options(
+        joinedload(models.CleaningAssignment.cleaner),
+        joinedload(models.CleaningAssignment.property)
+    )
+    if cleaning_date:
+        from datetime import date
+        query = query.filter(models.CleaningAssignment.cleaning_date == cleaning_date)
+    return query.order_by(models.CleaningAssignment.cleaning_date).all()
+
+def create_cleaning_assignment(db: Session, assignment: schemas.CleaningAssignmentCreate):
+    db_assignment = models.CleaningAssignment(
+        cleaner_id=assignment.cleaner_id,
+        property_id=assignment.property_id,
+        cleaning_date=assignment.cleaning_date,
+        notes=assignment.notes
+    )
+    db.add(db_assignment)
+    db.commit()
+    db.refresh(db_assignment)
+    return db.query(models.CleaningAssignment).options(
+        joinedload(models.CleaningAssignment.cleaner),
+        joinedload(models.CleaningAssignment.property)
+    ).filter(models.CleaningAssignment.id == db_assignment.id).first()
+
+def update_cleaning_assignment(db: Session, assignment_id: int, update: schemas.CleaningAssignmentUpdate):
+    db_a = db.query(models.CleaningAssignment).filter(models.CleaningAssignment.id == assignment_id).first()
+    if not db_a:
+        return None
+    for field, value in update.model_dump(exclude_unset=True).items():
+        setattr(db_a, field, value)
+    db.commit()
+    db.refresh(db_a)
+    return db_a
+
+def delete_cleaning_assignment(db: Session, assignment_id: int):
+    db_a = db.query(models.CleaningAssignment).filter(models.CleaningAssignment.id == assignment_id).first()
+    if db_a:
+        db.delete(db_a)
+        db.commit()
+        return True
+    return False
+
+def get_concierge_reports(db: Session):
+    return db.query(models.ConciergeReport).all()
+
+def update_or_create_concierge_report(db: Session, property_id: int, year: int, month: int, status: str, last_sent_at = None):
+    db_report = db.query(models.ConciergeReport).filter(
+        models.ConciergeReport.property_id == property_id,
+        models.ConciergeReport.year == year,
+        models.ConciergeReport.month == month
+    ).first()
+    
+    if not db_report:
+        db_report = models.ConciergeReport(
+            property_id=property_id,
+            year=year,
+            month=month,
+            status=status,
+            last_sent_at=last_sent_at
+        )
+        db.add(db_report)
+    else:
+        db_report.status = status
+        if last_sent_at:
+            db_report.last_sent_at = last_sent_at
+            
+    db.commit()
+    db.refresh(db_report)
+    return db_report
