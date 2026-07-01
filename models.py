@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Table
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Table, Date
 
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -185,4 +185,74 @@ class ResearchListing(database.Base):
     created_by = relationship("User")
     buyer = relationship("Buyer")
     tags = relationship("ResearchTag", secondary=research_listing_tags, backref="listings")
+
+class ConciergeProperty(database.Base):
+    __tablename__ = "concierge_properties"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True, nullable=False)
+    address = Column(String, nullable=True)
+    owner_name = Column(String, nullable=True)
+    owner_email = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bookings = relationship("ConciergeBooking", back_populates="property", cascade="all, delete-orphan")
+
+class ConciergeBooking(database.Base):
+    __tablename__ = "concierge_bookings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("concierge_properties.id", ondelete="CASCADE"), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    summary = Column(String, nullable=True)
+    uid = Column(String, nullable=True)
+    price = Column(Numeric(10, 2), nullable=True)
+    guest_name = Column(String, nullable=True)
+    is_manual = Column(Boolean, default=True)
+    source = Column(String, nullable=False, default="manual")
+    platform = Column(String, default="resaoff")
+    platform_fee = Column(Numeric(10, 2), default=0.0)
+    commission_rate = Column(Numeric(5, 2), default=20.0)
+    owner_payout = Column(Numeric(10, 2), default=0.0)
+    doorman_commission = Column(Numeric(10, 2), default=0.0)
+    nights = Column(Integer, default=1)
+
+    property = relationship("ConciergeProperty", back_populates="bookings")
+
+class Cleaner(database.Base):
+    __tablename__ = "cleaners"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    phone = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    assignments = relationship("CleaningAssignment", back_populates="cleaner", cascade="all, delete-orphan")
+
+class CleaningAssignment(database.Base):
+    __tablename__ = "cleaning_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cleaner_id = Column(Integer, ForeignKey("cleaners.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("concierge_properties.id", ondelete="CASCADE"), nullable=False)
+    cleaning_date = Column(Date, nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    cleaner = relationship("Cleaner", back_populates="assignments")
+    property = relationship("ConciergeProperty")
+
+
+class ConciergeReport(database.Base):
+    __tablename__ = "concierge_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("concierge_properties.id", ondelete="CASCADE"), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    status = Column(String, default="not_sent")
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+
+    property = relationship("ConciergeProperty")
 
