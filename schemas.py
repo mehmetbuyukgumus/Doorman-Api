@@ -262,3 +262,124 @@ class ResearchListing(ResearchListingBase):
     created_by: Optional[UserSchema] = None
     buyer: Optional[Buyer] = None
     model_config = ConfigDict(from_attributes=True)
+
+from datetime import date
+
+class ConciergeBookingBase(BaseModel):
+    start_date: date
+    end_date: date
+    summary: Optional[str] = None
+    uid: Optional[str] = None
+    price: Optional[Decimal] = None
+    guest_name: Optional[str] = None
+    is_manual: bool = True
+    source: str = "manual"
+    platform: Optional[str] = "resaoff"
+    platform_fee: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None
+    owner_payout: Optional[Decimal] = None
+    doorman_commission: Optional[Decimal] = None
+    nights: Optional[int] = 1
+
+class ConciergeBookingCreate(ConciergeBookingBase):
+    pass
+
+class ConciergeBookingUpdate(BaseModel):
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    guest_name: Optional[str] = None
+    price: Optional[Decimal] = None
+    platform: Optional[str] = None
+    platform_fee: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None
+    owner_payout: Optional[Decimal] = None
+    doorman_commission: Optional[Decimal] = None
+    nights: Optional[int] = None
+
+class ConciergeBooking(ConciergeBookingBase):
+    id: int
+    property_id: int
+    model_config = ConfigDict(from_attributes=True)
+
+class ConciergePropertyBase(BaseModel):
+    title: str
+    address: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+
+class ConciergePropertyCreate(ConciergePropertyBase):
+    pass
+
+class ConciergePropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    address: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+
+class ConciergeProperty(ConciergePropertyBase):
+    id: int
+    created_at: datetime
+    bookings: List[ConciergeBooking] = []
+    model_config = ConfigDict(from_attributes=True)
+
+# ── Cleaner ────────────────────────────────────────────────────────────────
+class CleanerBase(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    hourly_rate: Optional[float] = None
+
+class CleanerCreate(CleanerBase):
+    pass
+
+class CleanerUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    hourly_rate: Optional[float] = None
+
+class Cleaner(CleanerBase):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# ── CleaningAssignment ─────────────────────────────────────────────────────
+from datetime import date as date_type
+
+class CleaningAssignmentBase(BaseModel):
+    cleaner_id: int
+    property_id: int
+    cleaning_date: date_type
+    notes: Optional[str] = None
+
+class CleaningAssignmentCreate(CleaningAssignmentBase):
+    pass
+
+class CleaningAssignmentUpdate(BaseModel):
+    cleaner_id: Optional[int] = None
+    notes: Optional[str] = None
+
+class CleaningAssignment(CleaningAssignmentBase):
+    id: int
+    created_at: datetime
+    cleaner: Optional[Cleaner] = None
+    property: Optional[ConciergeProperty] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── ConciergeReport ────────────────────────────────────────────────────────
+class ConciergeReportBase(BaseModel):
+    property_id: int
+    year: int
+    month: int
+    status: str
+    last_sent_at: Optional[datetime] = None
+
+class ConciergeReportCreate(ConciergeReportBase):
+    pass
+
+class ConciergeReportUpdate(BaseModel):
+    status: Optional[str] = None
+    last_sent_at: Optional[datetime] = None
+
+class ConciergeReport(ConciergeReportBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)

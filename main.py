@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -271,8 +271,33 @@ def delete_user(
     if user_to_delete.email == current_user["email"]:
         raise HTTPException(status_code=400, detail="Superusers cannot delete their own account")
         
-    db.delete(user_to_delete)
-    db.commit()
+    try:
+        # Reassign or clean up associated content to avoid foreign key violations
+        # while keeping the data.
+        
+        # 1. Properties
+        db.query(models.Listing).filter(models.Listing.created_by_id == id).update({"created_by_id": None})
+        db.query(models.Listing).filter(models.Listing.updated_by_id == id).update({"updated_by_id": None})
+        
+        # 2. Blog Posts
+        db.query(models.BlogPost).filter(models.BlogPost.author_id == id).update({"author_id": None})
+        
+        # 3. Research Listings
+        db.query(models.ResearchListing).filter(models.ResearchListing.created_by_id == id).update({"created_by_id": None})
+        
+        # 4. Password Reset Requests (These can be safely deleted)
+        db.query(models.PasswordResetRequest).filter(models.PasswordResetRequest.user_id == id).delete()
+        
+        # Finally delete the user
+        db.delete(user_to_delete)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during user deletion cleanup: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Kullanıcı silinirken bir hata oluştu. Lütfen tekrar deneyin."
+        )
     return None
 
 # File upload constants
@@ -584,3 +609,349 @@ def delete_research_tag(
         raise HTTPException(status_code=404, detail="Tag not found")
     return None
 
+# --- Concierge Services Endpoints ---
+
+@app.get("/concierge/", response_model=List[schemas.ConciergeProperty])
+def read_concierge_properties(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    return crud.get_concierge_properties(db, skip=skip, limit=limit)
+
+@app.get("/concierge/{id}", response_model=schemas.ConciergeProperty)
+def read_concierge_property(
+    id: int,
+    db: Session = Depends(get_db)
+):
+    prop = crud.get_concierge_property(db, id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Concierge property not found")
+    return prop
+
+@app.post("/concierge/", response_model=schemas.ConciergeProperty, status_code=status.HTTP_201_CREATED)
+def create_concierge_property(
+    property: schemas.ConciergePropertyCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.create_concierge_property(db, property)
+
+@app.put("/concierge/{id}", response_model=schemas.ConciergeProperty)
+def update_concierge_property(
+    id: int,
+    property_update: schemas.ConciergePropertyUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    updated = crud.update_concierge_property(db, id, property_update)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Concierge property not found")
+    return updated
+
+@app.delete("/concierge/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_concierge_property(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    success = crud.delete_concierge_property(db, id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Concierge property not found")
+    return None
+
+@app.post("/concierge/{id}/sync")
+def sync_concierge_bookings(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return {"message": "Sync is disabled"}
+
+@app.post("/concierge/{id}/bookings", response_model=schemas.ConciergeBooking, status_code=status.HTTP_201_CREATED)
+def create_concierge_booking(
+    id: int,
+    booking: schemas.ConciergeBookingCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = crud.get_concierge_property(db, id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Concierge property not found")
+    try:
+        return crud.create_concierge_booking(db, booking, id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/concierge/bookings/{booking_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_concierge_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    success = crud.delete_concierge_booking(db, booking_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return None
+
+@app.put("/concierge/bookings/{booking_id}", response_model=schemas.ConciergeBooking)
+def update_concierge_booking(
+    booking_id: int,
+    booking_update: schemas.ConciergeBookingUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    try:
+        updated = crud.update_concierge_booking(db, booking_id, booking_update)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Booking not found")
+        return updated
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Cleaner Endpoints ──────────────────────────────────────────────────────
+
+@app.get("/cleaners/", response_model=List[schemas.Cleaner])
+def read_cleaners(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.get_cleaners(db)
+
+@app.post("/cleaners/", response_model=schemas.Cleaner, status_code=status.HTTP_201_CREATED)
+def create_cleaner(
+    cleaner: schemas.CleanerCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.create_cleaner(db, cleaner)
+
+@app.put("/cleaners/{cleaner_id}", response_model=schemas.Cleaner)
+def update_cleaner(
+    cleaner_id: int,
+    cleaner_update: schemas.CleanerUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    updated = crud.update_cleaner(db, cleaner_id, cleaner_update)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Cleaner not found")
+    return updated
+
+@app.delete("/cleaners/{cleaner_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_cleaner(
+    cleaner_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    success = crud.delete_cleaner(db, cleaner_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Cleaner not found")
+    return None
+
+# ── CleaningAssignment Endpoints ───────────────────────────────────────────
+
+@app.get("/cleaning-assignments/", response_model=List[schemas.CleaningAssignment])
+def read_cleaning_assignments(
+    cleaning_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.get_cleaning_assignments(db, cleaning_date=cleaning_date)
+
+@app.post("/cleaning-assignments/", response_model=schemas.CleaningAssignment, status_code=status.HTTP_201_CREATED)
+def create_cleaning_assignment(
+    assignment: schemas.CleaningAssignmentCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.create_cleaning_assignment(db, assignment)
+
+@app.put("/cleaning-assignments/{assignment_id}", response_model=schemas.CleaningAssignment)
+def update_cleaning_assignment(
+    assignment_id: int,
+    update: schemas.CleaningAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    updated = crud.update_cleaning_assignment(db, assignment_id, update)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return updated
+
+@app.delete("/cleaning-assignments/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_cleaning_assignment(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    success = crud.delete_cleaning_assignment(db, assignment_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return None
+
+
+# ── Property Owner Email Report Endpoint ───────────────────────────────────
+from io import BytesIO
+from openpyxl import Workbook
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
+@app.post("/concierge/{id}/send-report-email")
+def send_property_report_email(
+    id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = crud.get_concierge_property(db, id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+        
+    if not prop.owner_email:
+        raise HTTPException(status_code=400, detail="Owner email address is not set for this property.")
+        
+    # Filter bookings
+    bookings = prop.bookings
+    if year is not None and month is not None:
+        bookings = [b for b in bookings if b.start_date.year == year and b.start_date.month == (month + 1)]
+    else:
+        if start_date:
+            bookings = [b for b in bookings if str(b.start_date) >= start_date]
+        if end_date:
+            bookings = [b for b in bookings if str(b.end_date) <= end_date]
+        
+    # Generate Excel in-memory
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reservations"
+    
+    # Doorman header
+    ws.append(["DOORMAN CONCIERGE SERVICES"])
+    ws.append([f"Reservations Report for: {prop.title}"])
+    ws.append([f"Owner: {prop.owner_name or '—'}"])
+    ws.append([f"Generated on: {datetime.now().strftime('%d/%m/%Y')}"])
+    ws.append([]) # blank
+    
+    ws.append([
+        "Guest Name", "Platform", "Check-in", "Check-out", 
+        "Nights", "Gross Revenue (€)", "Doorman Commission (€)", "Owner Payout (€)"
+    ])
+    
+    total_nights = 0
+    total_gross = 0.0
+    total_doorman = 0.0
+    total_owner = 0.0
+    
+    for b in bookings:
+        nights = b.nights or 0
+        gross = float(b.price or 0.0)
+        doorman = float(b.doorman_commission or 0.0)
+        owner = float(b.owner_payout or 0.0)
+        
+        # EU date format
+        s_str = b.start_date.strftime("%d/%m/%y") if b.start_date else "—"
+        e_str = b.end_date.strftime("%d/%m/%y") if b.end_date else "—"
+        
+        ws.append([
+            b.guest_name or b.summary or "—",
+            b.platform or "Resaoff",
+            s_str,
+            e_str,
+            nights,
+            gross,
+            doorman,
+            owner
+        ])
+        
+        total_nights += nights
+        total_gross += gross
+        total_doorman += doorman
+        total_owner += owner
+        
+    ws.append([])
+    ws.append([
+        "TOTALS", "", "", "",
+        total_nights,
+        total_gross,
+        total_doorman,
+        total_owner
+    ])
+    
+    # Merge headers
+    ws.merge_cells("A1:H1")
+    ws.merge_cells("A2:H2")
+    ws.merge_cells("A3:H3")
+    ws.merge_cells("A4:H4")
+    
+    # Save to BytesIO
+    excel_file = BytesIO()
+    wb.save(excel_file)
+    excel_file.seek(0)
+    
+    # Email configuration from environment
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_user = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM_EMAIL")
+    smtp_from_name = os.getenv("SMTP_FROM_NAME", "Doorman")
+    
+    if not smtp_host or not smtp_user or not smtp_password:
+        raise HTTPException(status_code=500, detail="SMTP is not properly configured in server environment.")
+        
+    # Create Email
+    from email.utils import make_msgid, formatdate
+    msg = MIMEMultipart()
+    msg['From'] = f"{smtp_from_name} <{smtp_from}>"
+    msg['To'] = prop.owner_email
+    msg['Subject'] = f"DOORMAN - Rapport de reservations pour {prop.address or prop.title}"
+    msg['Date'] = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain='doorman.fr')
+    
+    body = (
+        f"Bonjour {prop.owner_name or 'Proprietaire'},\n\n"
+        f"Veuillez trouver ci-joint le rapport financier et des reservations pour votre propriete situee au '{prop.address or prop.title}'.\n\n"
+        f"Cordialement,\n"
+        f"L'equipe de conciergerie Doorman\n\n"
+        f"--\n"
+        f"Ceci est un e-mail d'information automatique, veuillez ne pas y repondre. "
+        f"Pour toute question, veuillez nous ecrire a contact@doorman.fr."
+    )
+    msg.attach(MIMEText(body, 'plain'))
+    
+    # Attach Excel
+    part = MIMEBase('application', "octet-stream")
+    part.set_payload(excel_file.read())
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', f'attachment; filename="doorman_report_{prop.title.lower().replace(" ", "_")}.xlsx"')
+    msg.attach(part)
+    
+    # Send email
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, prop.owner_email, msg.as_string())
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(err)}")
+        
+    if year is not None and month is not None:
+        crud.update_or_create_concierge_report(db, property_id=id, year=year, month=month, status="sent", last_sent_at=datetime.now())
+        
+    return {"message": "Email sent successfully to the property owner."}
+
+
+@app.get("/concierge/reports/", response_model=List[schemas.ConciergeReport])
+def read_concierge_reports(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.get_concierge_reports(db)
