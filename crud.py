@@ -547,11 +547,16 @@ def get_cleaning_assignments(db: Session, cleaning_date: str = None):
     return query.order_by(models.CleaningAssignment.cleaning_date).all()
 
 def create_cleaning_assignment(db: Session, assignment: schemas.CleaningAssignmentCreate):
+    cleaner = db.query(models.Cleaner).filter(models.Cleaner.id == assignment.cleaner_id).first()
+    prop = db.query(models.ConciergeProperty).filter(models.ConciergeProperty.id == assignment.property_id).first()
     db_assignment = models.CleaningAssignment(
         cleaner_id=assignment.cleaner_id,
         property_id=assignment.property_id,
         cleaning_date=assignment.cleaning_date,
-        notes=assignment.notes
+        notes=assignment.notes,
+        hourly_rate=assignment.hourly_rate if assignment.hourly_rate is not None else (cleaner.hourly_rate if cleaner else None),
+        max_cleaning_duration=assignment.max_cleaning_duration if assignment.max_cleaning_duration is not None else (prop.max_cleaning_duration if prop else None),
+        airbnb_cleaning_fee=assignment.airbnb_cleaning_fee if assignment.airbnb_cleaning_fee is not None else (prop.airbnb_cleaning_fee if prop else None),
     )
     db.add(db_assignment)
     db.commit()
@@ -565,8 +570,19 @@ def update_cleaning_assignment(db: Session, assignment_id: int, update: schemas.
     db_a = db.query(models.CleaningAssignment).filter(models.CleaningAssignment.id == assignment_id).first()
     if not db_a:
         return None
-    for field, value in update.model_dump(exclude_unset=True).items():
+    update_data = update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
         setattr(db_a, field, value)
+    if "cleaner_id" in update_data and "hourly_rate" not in update_data:
+        cleaner = db.query(models.Cleaner).filter(models.Cleaner.id == db_a.cleaner_id).first()
+        db_a.hourly_rate = cleaner.hourly_rate if cleaner else None
+    if "property_id" in update_data:
+        prop = db.query(models.ConciergeProperty).filter(models.ConciergeProperty.id == db_a.property_id).first()
+        if prop:
+            if "max_cleaning_duration" not in update_data:
+                db_a.max_cleaning_duration = prop.max_cleaning_duration
+            if "airbnb_cleaning_fee" not in update_data:
+                db_a.airbnb_cleaning_fee = prop.airbnb_cleaning_fee
     db.commit()
     db.refresh(db_a)
     return db_a

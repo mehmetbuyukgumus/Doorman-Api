@@ -306,6 +306,8 @@ class ConciergePropertyBase(BaseModel):
     address: Optional[str] = None
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
+    airbnb_cleaning_fee: Optional[float] = None
+    max_cleaning_duration: Optional[float] = None
 
 class ConciergePropertyCreate(ConciergePropertyBase):
     pass
@@ -315,6 +317,8 @@ class ConciergePropertyUpdate(BaseModel):
     address: Optional[str] = None
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
+    airbnb_cleaning_fee: Optional[float] = None
+    max_cleaning_duration: Optional[float] = None
 
 class ConciergeProperty(ConciergePropertyBase):
     id: int
@@ -349,13 +353,20 @@ class CleaningAssignmentBase(BaseModel):
     property_id: int
     cleaning_date: date_type
     notes: Optional[str] = None
+    hourly_rate: Optional[float] = None
+    max_cleaning_duration: Optional[float] = None
+    airbnb_cleaning_fee: Optional[float] = None
 
 class CleaningAssignmentCreate(CleaningAssignmentBase):
     pass
 
 class CleaningAssignmentUpdate(BaseModel):
     cleaner_id: Optional[int] = None
+    property_id: Optional[int] = None
     notes: Optional[str] = None
+    hourly_rate: Optional[float] = None
+    max_cleaning_duration: Optional[float] = None
+    airbnb_cleaning_fee: Optional[float] = None
 
 class CleaningAssignment(CleaningAssignmentBase):
     id: int

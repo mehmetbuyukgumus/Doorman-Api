@@ -194,6 +194,8 @@ class ConciergeProperty(database.Base):
     address = Column(String, nullable=True)
     owner_name = Column(String, nullable=True)
     owner_email = Column(String, nullable=True)
+    airbnb_cleaning_fee = Column(Numeric(10, 2), nullable=True)
+    max_cleaning_duration = Column(Numeric(4, 1), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     bookings = relationship("ConciergeBooking", back_populates="property", cascade="all, delete-orphan")
@@ -239,6 +241,9 @@ class CleaningAssignment(database.Base):
     property_id = Column(Integer, ForeignKey("concierge_properties.id", ondelete="CASCADE"), nullable=False)
     cleaning_date = Column(Date, nullable=False)
     notes = Column(Text, nullable=True)
+    hourly_rate = Column(Numeric(10, 2), nullable=True)
+    max_cleaning_duration = Column(Numeric(4, 1), nullable=True)
+    airbnb_cleaning_fee = Column(Numeric(10, 2), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     cleaner = relationship("Cleaner", back_populates="assignments")
