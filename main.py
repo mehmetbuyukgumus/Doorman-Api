@@ -39,6 +39,12 @@ cloudinary.config(
 # Create tables
 database.Base.metadata.create_all(bind=database.engine)
 
+import migrate_cleaners
+try:
+    migrate_cleaners.ensure_cleaner_hourly_rate_column()
+except Exception as e:
+    logger.error(f"Failed to run cleaners hourly_rate migration: {e}")
+
 import init_db
 try:
     init_db.init_admin()
@@ -577,5 +583,4 @@ def delete_research_tag(
     if not success:
         raise HTTPException(status_code=404, detail="Tag not found")
     return None
-
 
