@@ -622,3 +622,36 @@ def update_or_create_concierge_report(db: Session, property_id: int, year: int, 
     db.commit()
     db.refresh(db_report)
     return db_report
+
+
+# ── CleanerTransaction CRUD ────────────────────────────────────────────────
+
+def get_cleaner_transactions(db: Session, skip: int = 0, limit: int = 1000):
+    return (
+        db.query(models.CleanerTransaction)
+        .order_by(models.CleanerTransaction.transaction_date.desc(), models.CleanerTransaction.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+def create_cleaner_transaction(db: Session, transaction: schemas.CleanerTransactionCreate):
+    db_transaction = models.CleanerTransaction(**transaction.model_dump())
+    db.add(db_transaction)
+    db.commit()
+    db.refresh(db_transaction)
+    return db_transaction
+
+
+def delete_cleaner_transaction(db: Session, transaction_id: int):
+    db_transaction = (
+        db.query(models.CleanerTransaction)
+        .filter(models.CleanerTransaction.id == transaction_id)
+        .first()
+    )
+    if db_transaction:
+        db.delete(db_transaction)
+        db.commit()
+        return True
+    return False

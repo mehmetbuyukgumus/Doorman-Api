@@ -42,6 +42,7 @@ def ensure_cleaner_hourly_rate_column():
         "airbnb_cleaning_fee",
         "NUMERIC(10, 2)",
     )
+    _ensure_cleaner_transactions_table(inspector)
     _populate_cleaning_assignment_snapshots()
 
 
@@ -64,6 +65,35 @@ def _add_column(table_name, column_name, column_type):
         conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
         conn.commit()
         print(f"Successfully added {column_name} column to {table_name}.")
+
+
+def _ensure_cleaner_transactions_table(inspector):
+    if not inspector.has_table("cleaner_transactions"):
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE cleaner_transactions (
+                    id SERIAL PRIMARY KEY,
+                    cleaner_id INTEGER NOT NULL REFERENCES cleaners(id) ON DELETE CASCADE,
+                    property_id INTEGER REFERENCES concierge_properties(id) ON DELETE SET NULL,
+                    amount NUMERIC(10, 2) NOT NULL,
+                    type VARCHAR NOT NULL,
+                    transaction_date DATE NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cleaner_transactions_id ON cleaner_transactions(id)"))
+            conn.commit()
+            print("Successfully created cleaner_transactions table.")
+        return
+
+    _ensure_column(inspector, "cleaner_transactions", "cleaner_id", "INTEGER REFERENCES cleaners(id) ON DELETE CASCADE")
+    _ensure_column(inspector, "cleaner_transactions", "property_id", "INTEGER REFERENCES concierge_properties(id) ON DELETE SET NULL")
+    _ensure_column(inspector, "cleaner_transactions", "amount", "NUMERIC(10, 2)")
+    _ensure_column(inspector, "cleaner_transactions", "type", "VARCHAR")
+    _ensure_column(inspector, "cleaner_transactions", "transaction_date", "DATE")
+    _ensure_column(inspector, "cleaner_transactions", "description", "TEXT")
+    _ensure_column(inspector, "cleaner_transactions", "created_at", "TIMESTAMP WITH TIME ZONE DEFAULT now()")
 
 
 def _populate_cleaning_assignment_snapshots():

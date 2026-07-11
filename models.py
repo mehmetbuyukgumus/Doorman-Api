@@ -232,6 +232,7 @@ class Cleaner(database.Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     assignments = relationship("CleaningAssignment", back_populates="cleaner", cascade="all, delete-orphan")
+    transactions = relationship("CleanerTransaction", back_populates="cleaner", cascade="all, delete-orphan")
 
 class CleaningAssignment(database.Base):
     __tablename__ = "cleaning_assignments"
@@ -260,4 +261,20 @@ class ConciergeReport(database.Base):
     status = Column(String, default="not_sent")
     last_sent_at = Column(DateTime(timezone=True), nullable=True)
 
+    property = relationship("ConciergeProperty")
+
+
+class CleanerTransaction(database.Base):
+    __tablename__ = "cleaner_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cleaner_id = Column(Integer, ForeignKey("cleaners.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("concierge_properties.id", ondelete="SET NULL"), nullable=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+    type = Column(String, nullable=False)
+    transaction_date = Column(Date, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    cleaner = relationship("Cleaner", back_populates="transactions")
     property = relationship("ConciergeProperty")

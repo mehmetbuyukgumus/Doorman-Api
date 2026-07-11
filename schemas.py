@@ -394,3 +394,23 @@ class ConciergeReportUpdate(BaseModel):
 class ConciergeReport(ConciergeReportBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── CleanerTransaction ────────────────────────────────────────────────────
+class CleanerTransactionBase(BaseModel):
+    cleaner_id: int
+    property_id: Optional[int] = None
+    amount: Decimal
+    type: str
+    transaction_date: date_type
+    description: Optional[str] = None
+
+
+class CleanerTransactionCreate(CleanerTransactionBase):
+    pass
+
+
+class CleanerTransaction(CleanerTransactionBase):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)

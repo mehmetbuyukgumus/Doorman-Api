@@ -955,3 +955,36 @@ def read_concierge_reports(
     current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
 ):
     return crud.get_concierge_reports(db)
+
+
+# ── Cleaner Transaction Endpoints ─────────────────────────────────────────
+
+@app.get("/cleaner-transactions/", response_model=List[schemas.CleanerTransaction])
+def read_cleaner_transactions(
+    skip: int = 0,
+    limit: int = 1000,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.get_cleaner_transactions(db, skip=skip, limit=limit)
+
+
+@app.post("/cleaner-transactions/", response_model=schemas.CleanerTransaction, status_code=status.HTTP_201_CREATED)
+def create_cleaner_transaction(
+    transaction: schemas.CleanerTransactionCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return crud.create_cleaner_transaction(db, transaction)
+
+
+@app.delete("/cleaner-transactions/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_cleaner_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    success = crud.delete_cleaner_transaction(db, transaction_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return None
