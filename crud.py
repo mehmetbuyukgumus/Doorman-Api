@@ -4,7 +4,7 @@ from sqlalchemy import case
 from typing import List, Optional
 
 import models, schemas
-import cloudinary.uploader
+import storage
 
 def get_listings(
     db: Session, 
@@ -132,13 +132,13 @@ def update_listing(db: Session, listing_id: int, listing_update: schemas.Listing
 def delete_listing(db: Session, listing_id: int):
     listing = db.query(models.Listing).filter(models.Listing.id == listing_id).first()
     if listing:
-        # Delete media from Cloudinary
+        # Delete media from storage (MinIO)
         for m in listing.media:
             if m.public_id:
                 try:
-                    cloudinary.uploader.destroy(m.public_id)
+                    storage.delete_file(m.public_id)
                 except Exception as e:
-                    print(f"Failed to delete {m.public_id} from Cloudinary: {e}")
+                    print(f"Failed to delete {m.public_id} from MinIO: {e}")
         
         db.delete(listing)
         db.commit()

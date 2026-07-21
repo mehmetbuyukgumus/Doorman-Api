@@ -7,7 +7,7 @@ Professional digital management center backend for **Doorman SAS**. Built with F
 - **Core Property Management**: Full CRUD operations for property listings with advanced filtering (price, location, type, etc.).
 - **Professional Auth System**: JWT-based authentication with Role-Based Access Control (RBAC) including `superuser` and `editor` roles.
 - **Editorial Infrastructure**: Comprehensive blog system with ownership checks and approval workflows for content curators.
-- **Cloud Media Integration**: Seamless image management integrated with Cloudinary (upload, delete, optimize).
+- **Object Storage Integration**: Seamless S3-compatible image management integrated with MinIO (upload, delete, public access).
 - **Internal Research Tools**: Management system for research listings, buyers, and market analysis tags.
 - **Client Engagement**: Automated contact form message handling and management.
 - **Security & Stability**:
@@ -22,7 +22,7 @@ Professional digital management center backend for **Doorman SAS**. Built with F
 - **Database**: PostgreSQL
 - **ORM**: SQLAlchemy
 - **Authentication**: OAuth2 with JWT (Jose)
-- **Image Storage**: Cloudinary
+- **Image Storage**: MinIO (S3-Compatible Object Storage, Boto3)
 - **Deployment**: Docker, CapRover
 
 ## 📦 Getting Started

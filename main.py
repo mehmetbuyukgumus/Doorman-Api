@@ -13,8 +13,7 @@ import os
 import logging
 import models, database, schemas, crud, auth
 from dotenv import load_dotenv
-import cloudinary
-import cloudinary.uploader
+import storage
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -28,13 +27,11 @@ logger = logging.getLogger(__name__)
 # Rate Limiter
 limiter = Limiter(key_func=get_remote_address)
 
-# Cloudinary Configuration
-cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.getenv("CLOUDINARY_API_KEY"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-    secure=True
-)
+# Initialize MinIO Storage Bucket
+try:
+    storage.ensure_bucket_exists()
+except Exception as e:
+    logger.warning(f"Could not initialize MinIO bucket on startup: {e}")
 
 # Create tables
 database.Base.metadata.create_all(bind=database.engine)
@@ -327,10 +324,16 @@ async def upload_image(
                 detail=f"File too large. Maximum size: {MAX_UPLOAD_SIZE // (1024 * 1024)}MB"
             )
         
-        result = cloudinary.uploader.upload(file_content)
-        return {"url": result.get("secure_url", result.get("url")), "public_id": result.get("public_id")}
+        result = storage.upload_file(
+            file_content=file_content,
+            original_filename=file.filename or "image.jpg",
+            content_type=file.content_type or "image/jpeg"
+        )
+        return result
     except HTTPException:
         raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Image upload failed. Please try again.")
@@ -343,18 +346,15 @@ async def delete_image(
     current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
 ):
     try:
-        result = cloudinary.uploader.destroy(public_id, resource_type="image", invalidate=True)
-        
-        if result.get("result") == "ok":
+        success = storage.delete_file(public_id)
+        if success:
             return {"message": "Image deleted successfully"}
-        elif result.get("result") == "not found":
-            return {"message": "Image not found on Cloudinary (already deleted)"}
         else:
-            raise HTTPException(status_code=400, detail="Failed to delete image from cloud storage.")
+            return {"message": "Image not found on storage (already deleted)"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Cloudinary deletion error: {str(e)}")
+        logger.error(f"Storage deletion error: {str(e)}")
         raise HTTPException(status_code=500, detail="Image deletion failed. Please try again.")
 
 # --- Blog Post Endpoints ---
