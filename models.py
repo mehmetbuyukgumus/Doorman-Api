@@ -175,6 +175,7 @@ class ResearchListing(database.Base):
     total_floors = Column(Integer, nullable=True)
     heating_system = Column(String, nullable=True)
     internal_notes = Column(Text, nullable=True)
+    property_type = Column(String, nullable=True, default="apartment_sale")  # apartment_sale, apartment_rent, hotel, building
 
 
 

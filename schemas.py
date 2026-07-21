@@ -218,6 +218,7 @@ class ResearchListingBase(BaseModel):
 
     heating_system: Optional[str] = None
     internal_notes: Optional[str] = None
+    property_type: Optional[str] = "apartment_sale"  # apartment_sale, apartment_rent, hotel, building
     tags: List[ResearchTag] = []
 
 
@@ -248,6 +249,7 @@ class ResearchListingUpdate(BaseModel):
     total_floors: Optional[int] = None
     heating_system: Optional[str] = None
     internal_notes: Optional[str] = None
+    property_type: Optional[str] = None
     tag_ids: Optional[List[int]] = None
 
 

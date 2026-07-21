@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -356,6 +356,17 @@ async def delete_image(
     except Exception as e:
         logger.error(f"Storage deletion error: {str(e)}")
         raise HTTPException(status_code=500, detail="Image deletion failed. Please try again.")
+
+@app.get("/media/{file_key:path}")
+async def get_media_file(file_key: str):
+    file_bytes, content_type = storage.get_file(file_key)
+    if not file_bytes:
+        raise HTTPException(status_code=404, detail="File not found")
+    return Response(
+        content=file_bytes,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=31536000"}
+    )
 
 # --- Blog Post Endpoints ---
 

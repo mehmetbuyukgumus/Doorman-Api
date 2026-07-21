@@ -120,20 +120,39 @@ def upload_file(file_content: bytes, original_filename: str, content_type: str =
     )
 
     public_base = MINIO_PUBLIC_URL.rstrip("/")
-    public_url = f"{public_base}/{MINIO_BUCKET_NAME}/{file_key}"
+    if public_base.endswith("/media") or "/media" in public_base:
+        public_url = f"{public_base}/{file_key}"
+    else:
+        public_url = f"{public_base}/{MINIO_BUCKET_NAME}/{file_key}"
 
     return {
         "url": public_url,
         "public_id": file_key
     }
 
+def get_file(file_key: str) -> tuple[bytes | None, str]:
+    if not file_key:
+        return None, "image/webp"
+    # Normalize key (strip leading paths or bucket name if passed)
+    clean_key = file_key.split("/")[-1]
+    s3 = get_s3_client()
+    try:
+        response = s3.get_object(Bucket=MINIO_BUCKET_NAME, Key=clean_key)
+        file_bytes = response["Body"].read()
+        content_type = response.get("ContentType", "image/webp")
+        return file_bytes, content_type
+    except Exception as e:
+        logger.error(f"Failed to fetch file '{clean_key}' from MinIO: {e}")
+        return None, "image/webp"
+
 def delete_file(file_key: str) -> bool:
     if not file_key:
         return False
+    clean_key = file_key.split("/")[-1]
     s3 = get_s3_client()
     try:
-        s3.delete_object(Bucket=MINIO_BUCKET_NAME, Key=file_key)
+        s3.delete_object(Bucket=MINIO_BUCKET_NAME, Key=clean_key)
         return True
     except Exception as e:
-        logger.error(f"Failed to delete file '{file_key}' from MinIO: {e}")
+        logger.error(f"Failed to delete file '{clean_key}' from MinIO: {e}")
         return False
