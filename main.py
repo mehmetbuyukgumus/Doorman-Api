@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -693,6 +693,20 @@ def create_concierge_booking(
         return crud.create_concierge_booking(db, booking, id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/concierge/{id}/unblock")
+def unblock_concierge_calendar(
+    id: int,
+    start_date: date,
+    end_date: date,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = crud.get_concierge_property(db, id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Concierge property not found")
+    crud.unblock_calendar_range(db, id, start_date, end_date)
+    return {"message": "Calendar range successfully unblocked"}
 
 @app.delete("/concierge/bookings/{booking_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_concierge_booking(

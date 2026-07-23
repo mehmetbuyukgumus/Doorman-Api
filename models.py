@@ -220,6 +220,7 @@ class ConciergeBooking(database.Base):
     owner_payout = Column(Numeric(10, 2), default=0.0)
     doorman_commission = Column(Numeric(10, 2), default=0.0)
     nights = Column(Integer, default=1)
+    is_block = Column(Boolean, default=False, nullable=True)
 
     property = relationship("ConciergeProperty", back_populates="bookings")
 

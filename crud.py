@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from sqlalchemy import case
 from typing import List, Optional
+from datetime import date
 
 import models, schemas
 import storage
@@ -52,7 +53,7 @@ def get_listings(
             (models.Listing.status == "active", 0),
             else_=1
         ),
-        models.Listing.created_at.asc()
+        models.Listing.created_at.desc()
     )
 
     return query.offset(skip).limit(limit).all()
@@ -409,18 +410,22 @@ def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreat
         booking.end_date
     )
 
-    summary = booking.guest_name or "Direct Booking"
-    if booking.price:
-        summary += f" (€{booking.price})"
+    if booking.is_block:
+        summary = booking.summary or "Blocked Period"
+    else:
+        summary = booking.guest_name or "Direct Booking"
+        if booking.price:
+            summary += f" (€{booking.price})"
         
     db_booking = models.ConciergeBooking(
         property_id=property_id,
         start_date=booking.start_date,
         end_date=booking.end_date,
         summary=summary,
-        guest_name=booking.guest_name,
+        guest_name=booking.guest_name if not booking.is_block else "Blocked",
         price=booking.price,
         is_manual=True,
+        is_block=booking.is_block,
         source=booking.platform or "manual",
         platform=booking.platform or "resaoff",
         platform_fee=booking.platform_fee,
@@ -470,6 +475,8 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
         db_booking.platform_fee = booking_update.platform_fee
     if booking_update.commission_rate is not None:
         db_booking.commission_rate = booking_update.commission_rate
+    if booking_update.is_block is not None:
+        db_booking.is_block = booking_update.is_block
         
     nights, doorman, owner = calculate_financials(
         db_booking.price,
@@ -483,9 +490,12 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
     db_booking.doorman_commission = doorman
     db_booking.owner_payout = owner
     
-    summary = db_booking.guest_name or "Direct Booking"
-    if db_booking.price:
-        summary += f" (€{db_booking.price})"
+    if db_booking.is_block:
+        summary = "Blocked Period"
+    else:
+        summary = db_booking.guest_name or "Direct Booking"
+        if db_booking.price:
+            summary += f" (€{db_booking.price})"
     db_booking.summary = summary
     
     db.commit()
@@ -499,6 +509,54 @@ def delete_concierge_booking(db: Session, booking_id: int):
         db.commit()
         return True
     return False
+
+def unblock_calendar_range(db: Session, property_id: int, start_date: date, end_date: date):
+    # Find overlapping blocks (only where is_block is True)
+    blocks = db.query(models.ConciergeBooking).filter(
+        models.ConciergeBooking.property_id == property_id,
+        models.ConciergeBooking.is_block == True,
+        models.ConciergeBooking.start_date < end_date,
+        models.ConciergeBooking.end_date > start_date
+    ).all()
+    
+    for b in blocks:
+        # Case 1: Block is fully inside the unblock range -> delete it
+        if b.start_date >= start_date and b.end_date <= end_date:
+            db.delete(b)
+            
+        # Case 2: Block starts before and ends after -> split into two
+        elif b.start_date < start_date and b.end_date > end_date:
+            orig_end = b.end_date
+            b.end_date = start_date # shrink first block
+            b.nights = (b.end_date - b.start_date).days
+            
+            # create second block
+            new_block = models.ConciergeBooking(
+                property_id=property_id,
+                start_date=end_date,
+                end_date=orig_end,
+                summary=b.summary,
+                guest_name=b.guest_name,
+                is_block=True,
+                is_manual=True,
+                source=b.source,
+                platform=b.platform,
+                nights=(orig_end - end_date).days
+            )
+            db.add(new_block)
+            
+        # Case 3: Block starts before and ends within the range -> shrink end date
+        elif b.start_date < start_date and b.end_date <= end_date:
+            b.end_date = start_date
+            b.nights = (b.end_date - b.start_date).days
+            
+        # Case 4: Block starts within and ends after the range -> shrink start date
+        elif b.start_date >= start_date and b.end_date > end_date:
+            b.start_date = end_date
+            b.nights = (b.end_date - b.start_date).days
+
+    db.commit()
+    return True
 
 # ── Cleaner CRUD ───────────────────────────────────────────────────────────
 
