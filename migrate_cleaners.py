@@ -43,6 +43,12 @@ def ensure_cleaner_hourly_rate_column():
         "NUMERIC(10, 2)",
     )
     _ensure_cleaner_transactions_table(inspector)
+    _ensure_column(
+        inspector,
+        "concierge_bookings",
+        "is_block",
+        "BOOLEAN DEFAULT FALSE",
+    )
     _populate_cleaning_assignment_snapshots()
 
 
