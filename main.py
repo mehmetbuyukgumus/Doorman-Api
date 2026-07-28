@@ -33,20 +33,22 @@ try:
 except Exception as e:
     logger.warning(f"Could not initialize MinIO bucket on startup: {e}")
 
-# Create tables
+# Create tables (only creates missing tables; does NOT alter existing columns)
 database.Base.metadata.create_all(bind=database.engine)
 
-import migrate_cleaners
+# Run all schema migrations (idempotent – safe to run on every startup)
+import migrate_all
 try:
-    migrate_cleaners.ensure_cleaner_hourly_rate_column()
+    migrate_all.ensure_all_migrations()
 except Exception as e:
-    logger.error(f"Failed to run cleaners hourly_rate migration: {e}")
+    logger.error(f"Failed to run schema migrations: {e}")
 
 import init_db
 try:
     init_db.init_admin()
 except Exception as e:
     logger.error(f"Failed to initialize admin user: {e}")
+
 
 app = FastAPI(title="Doorman Real Estate API")
 
@@ -1013,3 +1015,16 @@ def delete_cleaner_transaction(
     if not success:
         raise HTTPException(status_code=404, detail="Transaction not found")
     return None
+
+
+@app.put("/cleaner-transactions/{transaction_id}", response_model=schemas.CleanerTransaction)
+def update_cleaner_transaction(
+    transaction_id: int,
+    transaction: schemas.CleanerTransactionCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    db_transaction = crud.update_cleaner_transaction(db, transaction_id, transaction)
+    if not db_transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return db_transaction

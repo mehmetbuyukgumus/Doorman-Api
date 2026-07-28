@@ -713,3 +713,18 @@ def delete_cleaner_transaction(db: Session, transaction_id: int):
         db.commit()
         return True
     return False
+
+
+def update_cleaner_transaction(db: Session, transaction_id: int, transaction_update: schemas.CleanerTransactionCreate):
+    db_transaction = (
+        db.query(models.CleanerTransaction)
+        .filter(models.CleanerTransaction.id == transaction_id)
+        .first()
+    )
+    if not db_transaction:
+        return None
+    for key, value in transaction_update.model_dump().items():
+        setattr(db_transaction, key, value)
+    db.commit()
+    db.refresh(db_transaction)
+    return db_transaction
