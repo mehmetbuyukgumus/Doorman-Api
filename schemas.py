@@ -283,6 +283,7 @@ class ConciergeBookingBase(BaseModel):
     doorman_commission: Optional[Decimal] = None
     nights: Optional[int] = 1
     is_block: Optional[bool] = False
+    notes: Optional[str] = None
 
 class ConciergeBookingCreate(ConciergeBookingBase):
     pass
@@ -299,6 +300,7 @@ class ConciergeBookingUpdate(BaseModel):
     doorman_commission: Optional[Decimal] = None
     nights: Optional[int] = None
     is_block: Optional[bool] = None
+    notes: Optional[str] = None
 
 class ConciergeBooking(ConciergeBookingBase):
     id: int

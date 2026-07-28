@@ -432,7 +432,8 @@ def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreat
         commission_rate=booking.commission_rate,
         doorman_commission=doorman,
         owner_payout=owner,
-        nights=nights
+        nights=nights,
+        notes=booking.notes
     )
     db.add(db_booking)
     db.commit()
@@ -477,6 +478,8 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
         db_booking.commission_rate = booking_update.commission_rate
     if booking_update.is_block is not None:
         db_booking.is_block = booking_update.is_block
+    if booking_update.notes is not None:
+        db_booking.notes = booking_update.notes
         
     nights, doorman, owner = calculate_financials(
         db_booking.price,
@@ -541,7 +544,8 @@ def unblock_calendar_range(db: Session, property_id: int, start_date: date, end_
                 is_manual=True,
                 source=b.source,
                 platform=b.platform,
-                nights=(orig_end - end_date).days
+                nights=(orig_end - end_date).days,
+                notes=b.notes
             )
             db.add(new_block)
             
