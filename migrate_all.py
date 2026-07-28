@@ -159,6 +159,30 @@ def _populate_cleaning_assignment_snapshots():
         _log(f"⚠️  Failed to back-fill cleaning assignment snapshots: {exc}")
 
 
+def _normalize_blocked_concierge_bookings():
+    """Keep calendar blocks distinct from revenue reservations."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                UPDATE concierge_bookings
+                SET
+                    source = 'block',
+                    platform = NULL,
+                    price = 0,
+                    platform_fee = 0,
+                    commission_rate = 0,
+                    owner_payout = 0,
+                    doorman_commission = 0,
+                    guest_name = 'Blocked',
+                    summary = COALESCE(NULLIF(summary, ''), 'Blocked Period')
+                WHERE is_block = TRUE
+            """))
+            conn.commit()
+        _log("✅ Normalized blocked concierge bookings.")
+    except Exception as exc:
+        _log(f"⚠️  Failed to normalize blocked concierge bookings: {exc}")
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def ensure_all_migrations():
@@ -179,6 +203,7 @@ def ensure_all_migrations():
         _migrate_cleaner_transactions(inspector)
         _migrate_concierge_reports(inspector)
         _populate_cleaning_assignment_snapshots()
+        _normalize_blocked_concierge_bookings()
 
         _log("✅ All schema migrations completed successfully.")
     except Exception as exc:

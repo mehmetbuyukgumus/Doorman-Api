@@ -846,7 +846,7 @@ def send_property_report_email(
         raise HTTPException(status_code=400, detail="Owner email address is not set for this property.")
         
     # Filter bookings
-    bookings = prop.bookings
+    bookings = [b for b in prop.bookings if not b.is_block]
     if year is not None and month is not None:
         bookings = [b for b in bookings if b.start_date.year == year and b.start_date.month == (month + 1)]
     else:

@@ -409,27 +409,36 @@ def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreat
         booking.start_date,
         booking.end_date
     )
+    if booking.is_block:
+        doorman = 0
+        owner = 0
 
     if booking.is_block:
         summary = booking.summary or "Blocked Period"
+        source = "block"
+        platform = None
+        guest_name = "Blocked"
     else:
         summary = booking.guest_name or "Direct Booking"
         if booking.price:
             summary += f" (€{booking.price})"
+        source = booking.platform or "manual"
+        platform = booking.platform or "resaoff"
+        guest_name = booking.guest_name
         
     db_booking = models.ConciergeBooking(
         property_id=property_id,
         start_date=booking.start_date,
         end_date=booking.end_date,
         summary=summary,
-        guest_name=booking.guest_name if not booking.is_block else "Blocked",
-        price=booking.price,
+        guest_name=guest_name,
+        price=0 if booking.is_block else booking.price,
         is_manual=True,
         is_block=booking.is_block,
-        source=booking.platform or "manual",
-        platform=booking.platform or "resaoff",
-        platform_fee=booking.platform_fee,
-        commission_rate=booking.commission_rate,
+        source=source,
+        platform=platform,
+        platform_fee=0 if booking.is_block else booking.platform_fee,
+        commission_rate=0 if booking.is_block else booking.commission_rate,
         doorman_commission=doorman,
         owner_payout=owner,
         nights=nights,
@@ -478,6 +487,13 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
         db_booking.commission_rate = booking_update.commission_rate
     if booking_update.is_block is not None:
         db_booking.is_block = booking_update.is_block
+        if db_booking.is_block:
+            db_booking.source = "block"
+            db_booking.platform = None
+            db_booking.guest_name = "Blocked"
+            db_booking.price = 0
+            db_booking.platform_fee = 0
+            db_booking.commission_rate = 0
     if booking_update.notes is not None:
         db_booking.notes = booking_update.notes
         
@@ -495,6 +511,8 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
     
     if db_booking.is_block:
         summary = "Blocked Period"
+        db_booking.doorman_commission = 0
+        db_booking.owner_payout = 0
     else:
         summary = db_booking.guest_name or "Direct Booking"
         if db_booking.price:
