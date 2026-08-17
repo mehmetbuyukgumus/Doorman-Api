@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
+from decimal import Decimal, ROUND_HALF_UP
 
 from datetime import datetime, timedelta, date
 import smtplib
@@ -369,6 +370,684 @@ async def get_media_file(file_key: str):
         media_type=content_type,
         headers={"Cache-Control": "public, max-age=31536000"}
     )
+
+
+# ── Long-Term Rentals / MinIO Documents ───────────────────────────────────
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    safe_filename = (filename or "document").replace("\\", "_").replace('"', "'")
+    return f'{disposition}; filename="{safe_filename}"'
+
+
+def _long_rental_query(db: Session):
+    return db.query(models.LongTermRentalProperty).options(
+        joinedload(models.LongTermRentalProperty.processes)
+            .joinedload(models.LongTermRentalProcess.candidates),
+        joinedload(models.LongTermRentalProperty.processes)
+            .joinedload(models.LongTermRentalProcess.selected_candidate),
+        joinedload(models.LongTermRentalProperty.processes)
+            .joinedload(models.LongTermRentalProcess.payments),
+        joinedload(models.LongTermRentalProperty.processes)
+            .joinedload(models.LongTermRentalProcess.documents),
+        joinedload(models.LongTermRentalProperty.documents),
+    )
+
+
+def _get_long_rental_property_or_404(db: Session, property_id: int):
+    prop = _long_rental_query(db).filter(models.LongTermRentalProperty.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Long-term rental property not found.")
+    return prop
+
+
+def _get_long_rental_process_or_404(db: Session, process_id: int):
+    process = db.query(models.LongTermRentalProcess).filter(models.LongTermRentalProcess.id == process_id).first()
+    if not process:
+        raise HTTPException(status_code=404, detail="Long-term rental process not found.")
+    return process
+
+
+def _active_long_rental_process(db: Session, property_id: int):
+    return db.query(models.LongTermRentalProcess).filter(
+        models.LongTermRentalProcess.property_id == property_id,
+        ~models.LongTermRentalProcess.status.in_(["ended", "archived"]),
+    ).order_by(models.LongTermRentalProcess.created_at.desc()).first()
+
+
+def _first_day_of_next_month(value: date) -> date:
+    if value.month == 12:
+        return date(value.year + 1, 1, 1)
+    return date(value.year, value.month + 1, 1)
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, value.day)
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _create_initial_long_rental_payment_schedule(
+    db: Session,
+    process: models.LongTermRentalProcess,
+    monthly_rent: Decimal,
+):
+    if process.payments:
+        return
+
+    lease_start = process.lease_start_date
+    if not lease_start:
+        return
+
+    rent = Decimal(str(monthly_rent))
+    billable_days = max(0, 31 - lease_start.day)
+    first_amount = _money((rent / Decimal("30")) * Decimal(billable_days))
+    first_due_date = date(lease_start.year, lease_start.month, 5)
+    if first_due_date < lease_start:
+        first_due_date = lease_start
+    db.add(models.LongTermRentalPayment(
+        process_id=process.id,
+        due_date=first_due_date,
+        amount=first_amount,
+        status="pending",
+        notes=f"Initial prorated rent: {billable_days}/30 days",
+    ))
+
+    next_month = _first_day_of_next_month(lease_start)
+    next_due = date(next_month.year, next_month.month, 5)
+    if process.lease_end_date:
+        index = 0
+        while True:
+            due_date = _add_months(next_due, index)
+            if due_date > process.lease_end_date:
+                break
+            db.add(models.LongTermRentalPayment(
+                process_id=process.id,
+                due_date=due_date,
+                amount=_money(rent),
+                status="pending",
+                notes="Monthly rent",
+            ))
+            index += 1
+    else:
+        for index in range(11):
+            db.add(models.LongTermRentalPayment(
+                process_id=process.id,
+                due_date=_add_months(next_due, index),
+                amount=_money(rent),
+                status="pending",
+                notes="Monthly rent",
+            ))
+
+
+@app.get("/long-term-rentals/properties", response_model=List[schemas.LongTermRentalProperty])
+def list_long_term_rental_properties(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    return _long_rental_query(db).order_by(models.LongTermRentalProperty.created_at.desc()).all()
+
+
+@app.post("/long-term-rentals/properties", response_model=schemas.LongTermRentalProperty, status_code=status.HTTP_201_CREATED)
+def create_long_term_rental_property(
+    payload: schemas.LongTermRentalPropertyCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = models.LongTermRentalProperty(**payload.model_dump())
+    db.add(prop)
+    db.flush()
+    process = models.LongTermRentalProcess(property_id=prop.id, status="visits")
+    db.add(process)
+    db.commit()
+    return _get_long_rental_property_or_404(db, prop.id)
+
+
+@app.put("/long-term-rentals/properties/{property_id}", response_model=schemas.LongTermRentalProperty)
+def update_long_term_rental_property(
+    property_id: int,
+    payload: schemas.LongTermRentalPropertyUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = db.query(models.LongTermRentalProperty).filter(models.LongTermRentalProperty.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Long-term rental property not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(prop, key, value)
+    db.commit()
+    return _get_long_rental_property_or_404(db, property_id)
+
+
+@app.delete("/long-term-rentals/properties/{property_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_long_term_rental_property(
+    property_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser"]))
+):
+    prop = _get_long_rental_property_or_404(db, property_id)
+    if any(process.status not in ["ended", "archived"] for process in prop.processes):
+        raise HTTPException(
+            status_code=400,
+            detail="This apartment has an open rental process. End or archive it before deleting the apartment.",
+        )
+    for process in prop.processes:
+        for document in process.documents:
+            storage.delete_raw_file(document.file_key)
+    for document in prop.documents:
+        storage.delete_raw_file(document.file_key)
+    db.delete(prop)
+    db.commit()
+    return None
+
+
+@app.post("/long-term-rentals/properties/{property_id}/processes", response_model=schemas.LongTermRentalProperty, status_code=status.HTTP_201_CREATED)
+def start_long_term_rental_process(
+    property_id: int,
+    payload: schemas.LongTermRentalProcessCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = _get_long_rental_property_or_404(db, property_id)
+    active_process = _active_long_rental_process(db, property_id)
+    if active_process:
+        raise HTTPException(status_code=400, detail="This property already has an active rental process.")
+    prop.status = "available"
+    db.add(models.LongTermRentalProcess(property_id=property_id, status="visits", notes=payload.notes))
+    db.commit()
+    return _get_long_rental_property_or_404(db, property_id)
+
+
+@app.post("/long-term-rentals/processes/{process_id}/candidates", response_model=schemas.LongTermRentalProperty, status_code=status.HTTP_201_CREATED)
+def add_long_term_rental_candidate(
+    process_id: int,
+    payload: schemas.LongTermRentalCandidateCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    if process.status == "ended":
+        raise HTTPException(status_code=400, detail="Cannot add candidates to an ended process.")
+    db.add(models.LongTermRentalCandidate(process_id=process_id, **payload.model_dump()))
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.put("/long-term-rentals/candidates/{candidate_id}", response_model=schemas.LongTermRentalProperty)
+def update_long_term_rental_candidate(
+    candidate_id: int,
+    payload: schemas.LongTermRentalCandidateUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    candidate = db.query(models.LongTermRentalCandidate).filter(models.LongTermRentalCandidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(candidate, key, value)
+    db.commit()
+    return _get_long_rental_property_or_404(db, candidate.process.property_id)
+
+
+@app.delete("/long-term-rentals/candidates/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_long_term_rental_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    candidate = db.query(models.LongTermRentalCandidate).filter(models.LongTermRentalCandidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    process = candidate.process
+    if process.selected_candidate_id == candidate.id:
+        process.selected_candidate_id = None
+        if process.status == "leasing":
+            process.status = "visits"
+    db.delete(candidate)
+    db.commit()
+    return None
+
+
+@app.post("/long-term-rentals/processes/{process_id}/select-candidate", response_model=schemas.LongTermRentalProperty)
+def select_long_term_rental_candidate(
+    process_id: int,
+    payload: schemas.LongTermRentalSelectCandidate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    candidate = db.query(models.LongTermRentalCandidate).filter(
+        models.LongTermRentalCandidate.id == payload.candidate_id,
+        models.LongTermRentalCandidate.process_id == process_id,
+    ).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found in this process.")
+    process.selected_candidate_id = candidate.id
+    process.status = "leasing"
+    candidate.status = "selected"
+    process.property.status = "leasing"
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.put("/long-term-rentals/processes/{process_id}", response_model=schemas.LongTermRentalProperty)
+def update_long_term_rental_process(
+    process_id: int,
+    payload: schemas.LongTermRentalProcessUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(process, key, value)
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.delete("/long-term-rentals/processes/{process_id}", response_model=schemas.LongTermRentalProperty)
+def delete_long_term_rental_process(
+    process_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    if process.status not in ["ended", "archived"]:
+        raise HTTPException(status_code=400, detail="Only closed or archived lease files can be deleted.")
+
+    property_id = process.property_id
+    for document in list(process.documents or []):
+        storage.delete_raw_file(document.file_key)
+
+    process.selected_candidate_id = None
+    db.flush()
+    db.delete(process)
+    db.commit()
+    return _get_long_rental_property_or_404(db, property_id)
+
+
+@app.post("/long-term-rentals/processes/{process_id}/cancel-contract", response_model=schemas.LongTermRentalProperty)
+def cancel_long_term_rental_contract_process(
+    process_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    if process.selected_candidate:
+        process.selected_candidate.status = "visit_planned"
+    process.selected_candidate_id = None
+    process.status = "visits"
+    process.contract_signed_at = None
+    process.lease_start_date = None
+    process.lease_end_date = None
+    process.property.status = "available"
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.post("/long-term-rentals/processes/{process_id}/sign-contract", response_model=schemas.LongTermRentalProperty)
+def sign_long_term_rental_contract(
+    process_id: int,
+    payload: schemas.LongTermRentalSignContract,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    if payload.candidate_id:
+        candidate = db.query(models.LongTermRentalCandidate).filter(
+            models.LongTermRentalCandidate.id == payload.candidate_id,
+            models.LongTermRentalCandidate.process_id == process_id,
+        ).first()
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found in this process.")
+        process.selected_candidate_id = candidate.id
+        candidate.status = "tenant"
+    elif process.selected_candidate:
+        process.selected_candidate.status = "tenant"
+    else:
+        raise HTTPException(status_code=400, detail="Select a tenant candidate before signing the contract.")
+
+    uploaded_categories = {document.category for document in process.documents}
+    missing_documents = [
+        label for category, label in [("contract", "signed contract"), ("guarantor", "guarantor")]
+        if category not in uploaded_categories
+    ]
+    if missing_documents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload the following documents before confirming: {', '.join(missing_documents)}.",
+        )
+
+    process.status = "active_lease"
+    process.lease_start_date = payload.lease_start_date
+    process.lease_end_date = payload.lease_end_date
+    process.contract_signed_at = payload.contract_signed_at or date.today()
+    process.property.status = "rented"
+    if payload.monthly_rent is not None:
+        process.property.monthly_rent = payload.monthly_rent
+    monthly_rent = process.property.monthly_rent
+    if monthly_rent is None or Decimal(str(monthly_rent)) <= 0:
+        raise HTTPException(status_code=400, detail="Monthly rent is required before signing the contract.")
+    charges = Decimal(str(process.property.charges or 0))
+    total_rent = Decimal(str(monthly_rent)) + charges
+    _create_initial_long_rental_payment_schedule(db, process, total_rent)
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.post("/long-term-rentals/processes/{process_id}/end-lease", response_model=schemas.LongTermRentalProperty)
+def end_long_term_rental_lease(
+    process_id: int,
+    payload: schemas.LongTermRentalEndLease,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    process.status = "ended"
+    process.ended_at = payload.ended_at
+    process.lease_end_date = payload.ended_at
+    process.end_reason = payload.end_reason
+    process.property.status = "available"
+    db.query(models.LongTermRentalPayment).filter(
+        models.LongTermRentalPayment.process_id == process_id,
+        models.LongTermRentalPayment.due_date > payload.ended_at,
+        models.LongTermRentalPayment.status != "paid",
+    ).delete(synchronize_session=False)
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.post("/long-term-rentals/processes/{process_id}/payments", response_model=schemas.LongTermRentalProperty, status_code=status.HTTP_201_CREATED)
+def add_long_term_rental_payment(
+    process_id: int,
+    payload: schemas.LongTermRentalPaymentCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    db.add(models.LongTermRentalPayment(process_id=process_id, **payload.model_dump()))
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.post("/long-term-rentals/processes/{process_id}/payments/extend", response_model=schemas.LongTermRentalProperty)
+def extend_long_term_rental_payment_schedule(
+    process_id: int,
+    months: int = 12,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    if process.status not in ["active_lease"]:
+        raise HTTPException(status_code=400, detail="Payments can only be extended for an active lease.")
+
+    monthly_rent = process.property.monthly_rent
+    if monthly_rent is None or Decimal(str(monthly_rent)) <= 0:
+        raise HTTPException(status_code=400, detail="Monthly rent is not set for this apartment.")
+    charges = Decimal(str(process.property.charges or 0))
+    rent = Decimal(str(monthly_rent)) + charges
+
+    last_payment = db.query(models.LongTermRentalPayment).filter(
+        models.LongTermRentalPayment.process_id == process_id
+    ).order_by(models.LongTermRentalPayment.due_date.desc()).first()
+    if not last_payment:
+        raise HTTPException(status_code=400, detail="No existing payment schedule found to extend.")
+
+    next_month = _first_day_of_next_month(last_payment.due_date)
+    next_due = date(next_month.year, next_month.month, 5)
+
+    created = 0
+    for index in range(max(1, months)):
+        due_date = _add_months(next_due, index)
+        if process.lease_end_date and due_date > process.lease_end_date:
+            break
+        db.add(models.LongTermRentalPayment(
+            process_id=process.id,
+            due_date=due_date,
+            amount=_money(rent),
+            status="pending",
+            notes="Monthly rent",
+        ))
+        created += 1
+
+    if created == 0:
+        raise HTTPException(status_code=400, detail="Lease end date does not allow further payments.")
+
+    db.commit()
+    return _get_long_rental_property_or_404(db, process.property_id)
+
+
+@app.put("/long-term-rentals/payments/{payment_id}", response_model=schemas.LongTermRentalProperty)
+def update_long_term_rental_payment(
+    payment_id: int,
+    payload: schemas.LongTermRentalPaymentUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    payment = db.query(models.LongTermRentalPayment).filter(models.LongTermRentalPayment.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(payment, key, value)
+    db.commit()
+    return _get_long_rental_property_or_404(db, payment.process.property_id)
+
+
+@app.delete("/long-term-rentals/payments/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_long_term_rental_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    payment = db.query(models.LongTermRentalPayment).filter(models.LongTermRentalPayment.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found.")
+    db.delete(payment)
+    db.commit()
+    return None
+
+
+@app.post("/long-term-rentals/processes/{process_id}/documents", response_model=schemas.LongTermRentalProperty, status_code=status.HTTP_201_CREATED)
+async def upload_long_term_rental_process_document(
+    process_id: int,
+    category: str = "other",
+    candidate_id: Optional[int] = None,
+    description: Optional[str] = None,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    process = _get_long_rental_process_or_404(db, process_id)
+    if candidate_id:
+        candidate = db.query(models.LongTermRentalCandidate).filter(
+            models.LongTermRentalCandidate.id == candidate_id,
+            models.LongTermRentalCandidate.process_id == process_id,
+        ).first()
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found in this process.")
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 25MB.")
+    try:
+        uploaded = storage.upload_raw_file(
+            content,
+            file.filename or "document",
+            file.content_type or "application/octet-stream",
+            f"{storage.LONG_RENTAL_DOCUMENT_PREFIX}/{process_id}",
+        )
+        db.add(models.LongTermRentalDocument(
+            process_id=process_id,
+            candidate_id=candidate_id,
+            file_key=uploaded["id"],
+            name=uploaded["name"],
+            mime_type=uploaded["mimeType"],
+            size=uploaded["size"],
+            category=category,
+            description=(description or "").strip() or None,
+        ))
+        db.commit()
+        return _get_long_rental_property_or_404(db, process.property_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Long-term rental process document upload error: {e}")
+        raise HTTPException(status_code=500, detail="Document upload failed.")
+
+
+@app.post("/long-term-rentals/properties/{property_id}/documents", response_model=schemas.LongTermRentalProperty, status_code=status.HTTP_201_CREATED)
+async def upload_long_term_rental_property_document(
+    property_id: int,
+    category: str = "listing",
+    description: Optional[str] = None,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    prop = _get_long_rental_property_or_404(db, property_id)
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 25MB.")
+    try:
+        uploaded = storage.upload_raw_file(
+            content,
+            file.filename or "document",
+            file.content_type or "application/octet-stream",
+            f"{storage.LONG_RENTAL_DOCUMENT_PREFIX}/property-{property_id}",
+        )
+        db.add(models.LongTermRentalDocument(
+            property_id=prop.id,
+            file_key=uploaded["id"],
+            name=uploaded["name"],
+            mime_type=uploaded["mimeType"],
+            size=uploaded["size"],
+            category=category,
+            description=(description or "").strip() or None,
+        ))
+        db.commit()
+        return _get_long_rental_property_or_404(db, prop.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Long-term rental property document upload error: {e}")
+        raise HTTPException(status_code=500, detail="Document upload failed.")
+
+
+@app.delete("/long-term-rentals/documents/records/{document_id}", response_model=schemas.LongTermRentalProperty)
+def delete_long_term_rental_process_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    document = db.query(models.LongTermRentalDocument).filter(models.LongTermRentalDocument.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    property_id = document.property_id or document.process.property_id
+    storage.delete_raw_file(document.file_key)
+    db.delete(document)
+    db.commit()
+    return _get_long_rental_property_or_404(db, property_id)
+
+
+@app.get("/long-term-rentals/documents/status")
+def long_term_documents_status(
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    try:
+        storage.ensure_bucket_exists()
+        return {
+            "connected": True,
+            "storage": "minio",
+            "bucket": storage.MINIO_BUCKET_NAME,
+            "prefix": storage.LONG_RENTAL_DOCUMENT_PREFIX,
+        }
+    except Exception as e:
+        logger.error(f"Long-term rental document storage status error: {e}")
+        return {
+            "connected": False,
+            "storage": "minio",
+            "bucket": storage.MINIO_BUCKET_NAME,
+            "prefix": storage.LONG_RENTAL_DOCUMENT_PREFIX,
+        }
+
+
+@app.get("/long-term-rentals/documents")
+def long_term_documents(
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    try:
+        return storage.list_raw_files(storage.LONG_RENTAL_DOCUMENT_PREFIX)
+    except Exception as e:
+        logger.error(f"Long-term rental document list error: {e}")
+        raise HTTPException(status_code=500, detail="Document list failed.")
+
+
+@app.post("/long-term-rentals/documents")
+async def long_term_document_upload(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 25MB.")
+    try:
+        return storage.upload_raw_file(
+            content,
+            file.filename or "document",
+            file.content_type or "application/octet-stream",
+            storage.LONG_RENTAL_DOCUMENT_PREFIX,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Long-term rental document upload error: {e}")
+        raise HTTPException(status_code=500, detail="Document upload failed.")
+
+
+@app.get("/long-term-rentals/documents/{file_key:path}/preview")
+def long_term_document_preview(
+    file_key: str,
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    content, content_type, filename = storage.get_raw_file(file_key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": _content_disposition("inline", filename)
+        },
+    )
+
+
+@app.get("/long-term-rentals/documents/{file_key:path}/download")
+def long_term_document_download(
+    file_key: str,
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    content, content_type, filename = storage.get_raw_file(file_key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": _content_disposition("attachment", filename)
+        },
+    )
+
+
+@app.delete("/long-term-rentals/documents/{file_key:path}")
+def long_term_document_delete(
+    file_key: str,
+    current_user: dict = Depends(auth.RoleChecker(["superuser", "editor"]))
+):
+    if not storage.delete_raw_file(file_key):
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {"message": "Document deleted"}
 
 # --- Blog Post Endpoints ---
 
@@ -868,55 +1547,64 @@ def send_property_report_email(
     ws.append([]) # blank
     
     ws.append([
-        "Guest Name", "Platform", "Check-in", "Check-out", 
-        "Nights", "Gross Revenue (€)", "Doorman Commission (€)", "Owner Payout (€)"
+        "Guest Name", "Platform", "Check-in", "Check-out",
+        "Nights", "Net Income (€)", "Doorman Commission (€)", "Other Fee (€)", "Other Fee Note", "Owner Payout (€)"
     ])
-    
+
     total_nights = 0
-    total_gross = 0.0
+    total_net = 0.0
     total_doorman = 0.0
+    total_other_fee = 0.0
     total_owner = 0.0
-    
+
     for b in bookings:
         nights = b.nights or 0
-        gross = float(b.price or 0.0)
+        # Net income = what the owner earned from the guest, after the platform's own fee
+        # (Airbnb/Booking.com cut) but before Doorman's commission or any other deduction.
+        net = float(b.price or 0.0) - float(b.platform_fee or 0.0)
         doorman = float(b.doorman_commission or 0.0)
+        other_fee = float(b.other_fee or 0.0)
         owner = float(b.owner_payout or 0.0)
-        
+
         # EU date format
         s_str = b.start_date.strftime("%d/%m/%y") if b.start_date else "—"
         e_str = b.end_date.strftime("%d/%m/%y") if b.end_date else "—"
-        
+
         ws.append([
             b.guest_name or b.summary or "—",
             b.platform or "Resaoff",
             s_str,
             e_str,
             nights,
-            gross,
+            net,
             doorman,
+            other_fee,
+            b.other_fee_note or "",
             owner
         ])
-        
+
         total_nights += nights
-        total_gross += gross
+        total_net += net
         total_doorman += doorman
+        total_other_fee += other_fee
         total_owner += owner
-        
+
     ws.append([])
     ws.append([
         "TOTALS", "", "", "",
         total_nights,
-        total_gross,
+        total_net,
         total_doorman,
+        total_other_fee,
+        "",
         total_owner
     ])
-    
+
     # Merge headers
-    ws.merge_cells("A1:H1")
-    ws.merge_cells("A2:H2")
-    ws.merge_cells("A3:H3")
-    ws.merge_cells("A4:H4")
+    ws.merge_cells("A1:J1")
+    ws.merge_cells("A2:J2")
+    ws.merge_cells("A3:J3")
+    ws.merge_cells("A4:J4")
     
     # Save to BytesIO
     excel_file = BytesIO()

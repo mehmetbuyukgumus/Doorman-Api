@@ -279,6 +279,8 @@ class ConciergeBookingBase(BaseModel):
     platform: Optional[str] = "resaoff"
     platform_fee: Optional[Decimal] = None
     commission_rate: Optional[Decimal] = None
+    other_fee: Optional[Decimal] = None
+    other_fee_note: Optional[str] = None
     owner_payout: Optional[Decimal] = None
     doorman_commission: Optional[Decimal] = None
     nights: Optional[int] = 1
@@ -296,6 +298,8 @@ class ConciergeBookingUpdate(BaseModel):
     platform: Optional[str] = None
     platform_fee: Optional[Decimal] = None
     commission_rate: Optional[Decimal] = None
+    other_fee: Optional[Decimal] = None
+    other_fee_note: Optional[str] = None
     owner_payout: Optional[Decimal] = None
     doorman_commission: Optional[Decimal] = None
     nights: Optional[int] = None
@@ -420,3 +424,170 @@ class CleanerTransaction(CleanerTransactionBase):
     id: int
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Long-Term Rentals ─────────────────────────────────────────────────────
+class LongTermRentalCandidateBase(BaseModel):
+    full_name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    visit_date: Optional[date_type] = None
+    visit_time: Optional[str] = None
+    status: str = "visit_planned"
+    notes: Optional[str] = None
+
+
+class LongTermRentalCandidateCreate(LongTermRentalCandidateBase):
+    pass
+
+
+class LongTermRentalCandidateUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    visit_date: Optional[date_type] = None
+    visit_time: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LongTermRentalCandidate(LongTermRentalCandidateBase):
+    id: int
+    process_id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LongTermRentalPaymentBase(BaseModel):
+    due_date: date_type
+    amount: Decimal
+    status: str = "pending"
+    paid_at: Optional[date_type] = None
+    notes: Optional[str] = None
+
+
+class LongTermRentalPaymentCreate(LongTermRentalPaymentBase):
+    pass
+
+
+class LongTermRentalPaymentUpdate(BaseModel):
+    due_date: Optional[date_type] = None
+    amount: Optional[Decimal] = None
+    status: Optional[str] = None
+    paid_at: Optional[date_type] = None
+    notes: Optional[str] = None
+
+
+class LongTermRentalPayment(LongTermRentalPaymentBase):
+    id: int
+    process_id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LongTermRentalDocument(BaseModel):
+    id: int
+    process_id: Optional[int] = None
+    property_id: Optional[int] = None
+    candidate_id: Optional[int] = None
+    file_key: str
+    name: str
+    mime_type: Optional[str] = None
+    size: Optional[int] = None
+    category: str = "other"
+    description: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LongTermRentalProcessBase(BaseModel):
+    status: str = "visits"
+    lease_start_date: Optional[date_type] = None
+    lease_end_date: Optional[date_type] = None
+    contract_signed_at: Optional[date_type] = None
+    ended_at: Optional[date_type] = None
+    end_reason: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LongTermRentalProcessCreate(BaseModel):
+    notes: Optional[str] = None
+
+
+class LongTermRentalProcessUpdate(BaseModel):
+    status: Optional[str] = None
+    lease_start_date: Optional[date_type] = None
+    lease_end_date: Optional[date_type] = None
+    contract_signed_at: Optional[date_type] = None
+    ended_at: Optional[date_type] = None
+    end_reason: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LongTermRentalProcess(LongTermRentalProcessBase):
+    id: int
+    property_id: int
+    selected_candidate_id: Optional[int] = None
+    selected_candidate: Optional[LongTermRentalCandidate] = None
+    candidates: List[LongTermRentalCandidate] = []
+    payments: List[LongTermRentalPayment] = []
+    documents: List[LongTermRentalDocument] = []
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LongTermRentalPropertyBase(BaseModel):
+    title: str
+    address: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+    monthly_rent: Optional[Decimal] = None
+    management_fee_percent: Optional[Decimal] = None
+    charges: Optional[Decimal] = None
+    deposit: Optional[Decimal] = None
+    status: str = "available"
+    notes: Optional[str] = None
+
+
+class LongTermRentalPropertyCreate(LongTermRentalPropertyBase):
+    pass
+
+
+class LongTermRentalPropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    address: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+    monthly_rent: Optional[Decimal] = None
+    management_fee_percent: Optional[Decimal] = None
+    charges: Optional[Decimal] = None
+    deposit: Optional[Decimal] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LongTermRentalProperty(LongTermRentalPropertyBase):
+    id: int
+    processes: List[LongTermRentalProcess] = []
+    documents: List[LongTermRentalDocument] = []
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LongTermRentalSelectCandidate(BaseModel):
+    candidate_id: int
+
+
+class LongTermRentalSignContract(BaseModel):
+    candidate_id: Optional[int] = None
+    lease_start_date: date_type
+    lease_end_date: Optional[date_type] = None
+    contract_signed_at: Optional[date_type] = None
+    monthly_rent: Optional[Decimal] = None
+
+
+class LongTermRentalEndLease(BaseModel):
+    ended_at: date_type
+    end_reason: Optional[str] = None

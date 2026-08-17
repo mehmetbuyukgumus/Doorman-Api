@@ -80,6 +80,9 @@ def _migrate_concierge_bookings(inspector):
     _ensure_column(inspector, "concierge_bookings", "is_block", "BOOLEAN DEFAULT FALSE")
     # Ensure notes column (some older schemas may be missing it)
     _ensure_column(inspector, "concierge_bookings", "notes", "TEXT")
+    # Owner-only deduction (e.g. damages, extra cleaning) — never reduces Doorman's commission.
+    _ensure_column(inspector, "concierge_bookings", "other_fee", "NUMERIC(10, 2) DEFAULT 0.0")
+    _ensure_column(inspector, "concierge_bookings", "other_fee_note", "TEXT")
 
 
 def _migrate_cleaners(inspector):
@@ -129,6 +132,117 @@ def _migrate_concierge_reports(inspector):
             last_sent_at TIMESTAMP WITH TIME ZONE
         )
     """)
+
+
+def _migrate_long_term_rentals(inspector):
+    """Long-term rental workflow tables."""
+    _ensure_table(inspector, "long_term_rental_properties", """
+        CREATE TABLE long_term_rental_properties (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            address VARCHAR,
+            owner_name VARCHAR,
+            owner_email VARCHAR,
+            monthly_rent NUMERIC(10, 2),
+            management_fee_percent NUMERIC(5, 2),
+            charges NUMERIC(10, 2),
+            deposit NUMERIC(10, 2),
+            status VARCHAR NOT NULL DEFAULT 'available',
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )
+    """)
+    _ensure_column(inspector, "long_term_rental_properties", "management_fee_percent", "NUMERIC(5, 2)")
+    _ensure_table(inspector, "long_term_rental_processes", """
+        CREATE TABLE long_term_rental_processes (
+            id SERIAL PRIMARY KEY,
+            property_id INTEGER NOT NULL REFERENCES long_term_rental_properties(id) ON DELETE CASCADE,
+            status VARCHAR NOT NULL DEFAULT 'visits',
+            selected_candidate_id INTEGER,
+            lease_start_date DATE,
+            lease_end_date DATE,
+            contract_signed_at DATE,
+            ended_at DATE,
+            end_reason TEXT,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )
+    """)
+    _ensure_table(inspector, "long_term_rental_candidates", """
+        CREATE TABLE long_term_rental_candidates (
+            id SERIAL PRIMARY KEY,
+            process_id INTEGER NOT NULL REFERENCES long_term_rental_processes(id) ON DELETE CASCADE,
+            full_name VARCHAR NOT NULL,
+            email VARCHAR,
+            phone VARCHAR,
+            visit_date DATE,
+            visit_time VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'visit_planned',
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )
+    """)
+    _ensure_column(inspector, "long_term_rental_candidates", "visit_time", "VARCHAR")
+    _ensure_table(inspector, "long_term_rental_payments", """
+        CREATE TABLE long_term_rental_payments (
+            id SERIAL PRIMARY KEY,
+            process_id INTEGER NOT NULL REFERENCES long_term_rental_processes(id) ON DELETE CASCADE,
+            due_date DATE NOT NULL,
+            amount NUMERIC(10, 2) NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'pending',
+            paid_at DATE,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )
+    """)
+    _ensure_table(inspector, "long_term_rental_documents", """
+        CREATE TABLE long_term_rental_documents (
+            id SERIAL PRIMARY KEY,
+            process_id INTEGER REFERENCES long_term_rental_processes(id) ON DELETE CASCADE,
+            property_id INTEGER REFERENCES long_term_rental_properties(id) ON DELETE CASCADE,
+            candidate_id INTEGER REFERENCES long_term_rental_candidates(id) ON DELETE SET NULL,
+            file_key VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            mime_type VARCHAR,
+            size INTEGER,
+            category VARCHAR NOT NULL DEFAULT 'other',
+            description TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        )
+    """)
+    _ensure_column(inspector, "long_term_rental_documents", "candidate_id", "INTEGER")
+    _ensure_column(inspector, "long_term_rental_documents", "description", "TEXT")
+    _ensure_column(
+        inspector, "long_term_rental_documents", "property_id",
+        "INTEGER REFERENCES long_term_rental_properties(id) ON DELETE CASCADE"
+    )
+    _migrate_long_term_rental_property_documents(inspector)
+
+
+def _migrate_long_term_rental_property_documents(inspector):
+    """Apartment documents (DPE, inventory, etc.) belong to the apartment, not a
+    single rental process. Allow process_id to be null and move any existing
+    'listing' category documents from their process onto the apartment itself."""
+    if not _table_exists(inspector, "long_term_rental_documents"):
+        return
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE long_term_rental_documents ALTER COLUMN process_id DROP NOT NULL"
+            ))
+            result = conn.execute(text("""
+                UPDATE long_term_rental_documents AS d
+                SET property_id = p.property_id, process_id = NULL
+                FROM long_term_rental_processes AS p
+                WHERE d.process_id = p.id AND d.category = 'listing' AND d.property_id IS NULL
+            """))
+            conn.commit()
+            if result.rowcount:
+                _log(f"✅ Moved {result.rowcount} apartment document(s) from process to apartment level.")
+    except Exception as exc:
+        _log(f"⚠️  Failed to migrate long-term rental property documents: {exc}")
 
 
 def _populate_cleaning_assignment_snapshots():
@@ -202,6 +316,7 @@ def ensure_all_migrations():
         _migrate_cleaning_assignments(inspector)
         _migrate_cleaner_transactions(inspector)
         _migrate_concierge_reports(inspector)
+        _migrate_long_term_rentals(inspector)
         _populate_cleaning_assignment_snapshots()
         _normalize_blocked_concierge_bookings()
 

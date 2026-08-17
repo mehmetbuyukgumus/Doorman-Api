@@ -375,21 +375,23 @@ def delete_concierge_property(db: Session, property_id: int):
 def sync_concierge_bookings(db: Session, property_id: int):
     return True
 
-def calculate_financials(price, platform_fee, commission_rate, start_date, end_date):
+def calculate_financials(price, platform_fee, commission_rate, start_date, end_date, other_fee=0.0):
     p = float(price or 0.0)
     pf = float(platform_fee or 0.0)
     cr = float(commission_rate or 20.0)
-    
+    of = float(other_fee or 0.0)
+
     net = p - pf
     doorman = net * (cr / 100.0)
-    owner = net - doorman
-    
+    # other_fee is deducted from the owner's share only — it never reduces Doorman's commission.
+    owner = net - doorman - of
+
     if start_date and end_date:
         delta = end_date - start_date
         nights = max(1, delta.days)
     else:
         nights = 1
-        
+
     return nights, doorman, owner
 
 def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreate, property_id: int):
@@ -407,7 +409,8 @@ def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreat
         booking.platform_fee,
         booking.commission_rate,
         booking.start_date,
-        booking.end_date
+        booking.end_date,
+        booking.other_fee
     )
     if booking.is_block:
         doorman = 0
@@ -425,7 +428,7 @@ def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreat
         source = booking.platform or "manual"
         platform = booking.platform or "resaoff"
         guest_name = booking.guest_name
-        
+
     db_booking = models.ConciergeBooking(
         property_id=property_id,
         start_date=booking.start_date,
@@ -439,6 +442,8 @@ def create_concierge_booking(db: Session, booking: schemas.ConciergeBookingCreat
         platform=platform,
         platform_fee=0 if booking.is_block else booking.platform_fee,
         commission_rate=0 if booking.is_block else booking.commission_rate,
+        other_fee=0 if booking.is_block else booking.other_fee,
+        other_fee_note=None if booking.is_block else booking.other_fee_note,
         doorman_commission=doorman,
         owner_payout=owner,
         nights=nights,
@@ -485,6 +490,10 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
         db_booking.platform_fee = booking_update.platform_fee
     if booking_update.commission_rate is not None:
         db_booking.commission_rate = booking_update.commission_rate
+    if booking_update.other_fee is not None:
+        db_booking.other_fee = booking_update.other_fee
+    if booking_update.other_fee_note is not None:
+        db_booking.other_fee_note = booking_update.other_fee_note
     if booking_update.is_block is not None:
         db_booking.is_block = booking_update.is_block
         if db_booking.is_block:
@@ -494,21 +503,24 @@ def update_concierge_booking(db: Session, booking_id: int, booking_update: schem
             db_booking.price = 0
             db_booking.platform_fee = 0
             db_booking.commission_rate = 0
+            db_booking.other_fee = 0
+            db_booking.other_fee_note = None
     if booking_update.notes is not None:
         db_booking.notes = booking_update.notes
-        
+
     nights, doorman, owner = calculate_financials(
         db_booking.price,
         db_booking.platform_fee,
         db_booking.commission_rate,
         db_booking.start_date,
-        db_booking.end_date
+        db_booking.end_date,
+        db_booking.other_fee
     )
-    
+
     db_booking.nights = nights
     db_booking.doorman_commission = doorman
     db_booking.owner_payout = owner
-    
+
     if db_booking.is_block:
         summary = "Blocked Period"
         db_booking.doorman_commission = 0

@@ -217,6 +217,8 @@ class ConciergeBooking(database.Base):
     platform = Column(String, default="resaoff")
     platform_fee = Column(Numeric(10, 2), default=0.0)
     commission_rate = Column(Numeric(5, 2), default=20.0)
+    other_fee = Column(Numeric(10, 2), default=0.0)
+    other_fee_note = Column(Text, nullable=True)
     owner_payout = Column(Numeric(10, 2), default=0.0)
     doorman_commission = Column(Numeric(10, 2), default=0.0)
     nights = Column(Integer, default=1)
@@ -281,3 +283,109 @@ class CleanerTransaction(database.Base):
 
     cleaner = relationship("Cleaner", back_populates="transactions")
     property = relationship("ConciergeProperty")
+
+
+class LongTermRentalProperty(database.Base):
+    __tablename__ = "long_term_rental_properties"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False, index=True)
+    address = Column(String, nullable=True)
+    owner_name = Column(String, nullable=True)
+    owner_email = Column(String, nullable=True)
+    monthly_rent = Column(Numeric(10, 2), nullable=True)
+    management_fee_percent = Column(Numeric(5, 2), nullable=True)
+    charges = Column(Numeric(10, 2), nullable=True)
+    deposit = Column(Numeric(10, 2), nullable=True)
+    status = Column(String, default="available", nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    processes = relationship("LongTermRentalProcess", back_populates="property", cascade="all, delete-orphan")
+    documents = relationship(
+        "LongTermRentalDocument",
+        back_populates="property",
+        cascade="all, delete-orphan",
+        foreign_keys="LongTermRentalDocument.property_id",
+    )
+
+
+class LongTermRentalProcess(database.Base):
+    __tablename__ = "long_term_rental_processes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("long_term_rental_properties.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String, default="visits", nullable=False)
+    selected_candidate_id = Column(Integer, ForeignKey("long_term_rental_candidates.id", ondelete="SET NULL"), nullable=True)
+    lease_start_date = Column(Date, nullable=True)
+    lease_end_date = Column(Date, nullable=True)
+    contract_signed_at = Column(Date, nullable=True)
+    ended_at = Column(Date, nullable=True)
+    end_reason = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    property = relationship("LongTermRentalProperty", back_populates="processes")
+    candidates = relationship(
+        "LongTermRentalCandidate",
+        back_populates="process",
+        cascade="all, delete-orphan",
+        foreign_keys="LongTermRentalCandidate.process_id",
+    )
+    selected_candidate = relationship("LongTermRentalCandidate", foreign_keys=[selected_candidate_id], post_update=True)
+    payments = relationship("LongTermRentalPayment", back_populates="process", cascade="all, delete-orphan")
+    documents = relationship("LongTermRentalDocument", back_populates="process", cascade="all, delete-orphan")
+
+
+class LongTermRentalCandidate(database.Base):
+    __tablename__ = "long_term_rental_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("long_term_rental_processes.id", ondelete="CASCADE"), nullable=False)
+    full_name = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    visit_date = Column(Date, nullable=True)
+    visit_time = Column(String, nullable=True)
+    status = Column(String, default="visit_planned", nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    process = relationship("LongTermRentalProcess", back_populates="candidates", foreign_keys=[process_id])
+
+
+class LongTermRentalPayment(database.Base):
+    __tablename__ = "long_term_rental_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("long_term_rental_processes.id", ondelete="CASCADE"), nullable=False)
+    due_date = Column(Date, nullable=False)
+    amount = Column(Numeric(10, 2), nullable=False)
+    status = Column(String, default="pending", nullable=False)
+    paid_at = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    process = relationship("LongTermRentalProcess", back_populates="payments")
+
+
+class LongTermRentalDocument(database.Base):
+    __tablename__ = "long_term_rental_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("long_term_rental_processes.id", ondelete="CASCADE"), nullable=True)
+    property_id = Column(Integer, ForeignKey("long_term_rental_properties.id", ondelete="CASCADE"), nullable=True)
+    candidate_id = Column(Integer, ForeignKey("long_term_rental_candidates.id", ondelete="SET NULL"), nullable=True)
+    file_key = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    mime_type = Column(String, nullable=True)
+    size = Column(Integer, nullable=True)
+    category = Column(String, default="other", nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    process = relationship("LongTermRentalProcess", back_populates="documents", foreign_keys=[process_id])
+    property = relationship("LongTermRentalProperty", back_populates="documents", foreign_keys=[property_id])
+    candidate = relationship("LongTermRentalCandidate")

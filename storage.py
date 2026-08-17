@@ -3,6 +3,8 @@ import io
 import json
 import uuid
 import logging
+from datetime import timezone
+from urllib.parse import quote, unquote
 import boto3
 from botocore.exceptions import ClientError
 from PIL import Image, ImageOps
@@ -15,6 +17,11 @@ pillow_heif.register_heif_opener()
 
 # Allowed image formats & extensions
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", ".tiff", ".gif"}
+ALLOWED_DOCUMENT_EXTENSIONS = {
+    ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx",
+    ".xls", ".xlsx", ".txt", ".csv"
+}
+LONG_RENTAL_DOCUMENT_PREFIX = "long-rentals/documents"
 
 # MinIO / S3 Configuration from Environment Variables
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
@@ -129,6 +136,98 @@ def upload_file(file_content: bytes, original_filename: str, content_type: str =
         "url": public_url,
         "public_id": file_key
     }
+
+def _clean_object_key(file_key: str) -> str:
+    if not file_key:
+        return ""
+    clean_key = file_key.lstrip("/")
+    bucket_prefix = f"{MINIO_BUCKET_NAME}/"
+    if clean_key.startswith(bucket_prefix):
+        clean_key = clean_key[len(bucket_prefix):]
+    return clean_key
+
+def upload_raw_file(
+    file_content: bytes,
+    original_filename: str,
+    content_type: str = "application/octet-stream",
+    prefix: str = LONG_RENTAL_DOCUMENT_PREFIX,
+) -> dict:
+    filename = original_filename or "document"
+    ext = os.path.splitext(filename.lower())[1]
+    if ext and ext not in ALLOWED_DOCUMENT_EXTENSIONS:
+        allowed_list = ", ".join(sorted(ALLOWED_DOCUMENT_EXTENSIONS))
+        raise ValueError(f"File type '{ext}' not allowed. Allowed formats: {allowed_list}")
+
+    file_key = f"{prefix.strip('/')}/{uuid.uuid4()}{ext or ''}"
+    s3 = get_s3_client()
+    s3.put_object(
+        Bucket=MINIO_BUCKET_NAME,
+        Key=file_key,
+        Body=file_content,
+        ContentType=content_type or "application/octet-stream",
+        Metadata={"original-filename": quote(filename)},
+    )
+
+    return {
+        "id": file_key,
+        "name": filename,
+        "mimeType": content_type or "application/octet-stream",
+        "size": len(file_content),
+    }
+
+def list_raw_files(prefix: str = LONG_RENTAL_DOCUMENT_PREFIX) -> list[dict]:
+    s3 = get_s3_client()
+    response = s3.list_objects_v2(
+        Bucket=MINIO_BUCKET_NAME,
+        Prefix=f"{prefix.strip('/')}/",
+    )
+    files = []
+    for item in response.get("Contents", []):
+        key = item.get("Key")
+        if not key:
+            continue
+        try:
+            head = s3.head_object(Bucket=MINIO_BUCKET_NAME, Key=key)
+            metadata = head.get("Metadata") or {}
+            name = unquote(metadata.get("original-filename") or "") or os.path.basename(key)
+            files.append({
+                "id": key,
+                "name": name,
+                "mimeType": head.get("ContentType") or "application/octet-stream",
+                "size": item.get("Size", 0),
+                "modifiedTime": item.get("LastModified").astimezone(timezone.utc).isoformat() if item.get("LastModified") else None,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to read metadata for MinIO object '{key}': {e}")
+    return sorted(files, key=lambda file: file.get("modifiedTime") or "", reverse=True)
+
+def get_raw_file(file_key: str) -> tuple[bytes | None, str, str]:
+    clean_key = _clean_object_key(file_key)
+    if not clean_key:
+        return None, "application/octet-stream", "document"
+    s3 = get_s3_client()
+    try:
+        response = s3.get_object(Bucket=MINIO_BUCKET_NAME, Key=clean_key)
+        metadata = response.get("Metadata") or {}
+        file_bytes = response["Body"].read()
+        content_type = response.get("ContentType", "application/octet-stream")
+        filename = unquote(metadata.get("original-filename") or "") or os.path.basename(clean_key) or "document"
+        return file_bytes, content_type, filename
+    except Exception as e:
+        logger.error(f"Failed to fetch raw file '{clean_key}' from MinIO: {e}")
+        return None, "application/octet-stream", "document"
+
+def delete_raw_file(file_key: str) -> bool:
+    clean_key = _clean_object_key(file_key)
+    if not clean_key:
+        return False
+    s3 = get_s3_client()
+    try:
+        s3.delete_object(Bucket=MINIO_BUCKET_NAME, Key=clean_key)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete raw file '{clean_key}' from MinIO: {e}")
+        return False
 
 def get_file(file_key: str) -> tuple[bytes | None, str]:
     if not file_key:
